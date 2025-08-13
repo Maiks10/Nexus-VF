@@ -10,7 +10,8 @@ export function SocialManager() {
         <TabsList className="grid w-full grid-cols-3 bg-gray-800/50 text-gray-400">
           <TabsTrigger value="feed"><List className="w-4 h-4 mr-2" /> Feed e Comentários</TabsTrigger>
           <TabsTrigger value="automations"><Repeat className="w-4 h-4 mr-2" /> Automações</TabsTrigger>
-          <TabsTrigger value="settings"><Settings className="w-4 h-4 mr-2" /> Configurações</gITabsTrigger>
+          {/* A CORREÇÃO ESTÁ AQUI ABAIXO */}
+          <TabsTrigger value="settings"><Settings className="w-4 h-4 mr-2" /> Configurações</TabsTrigger>
         </TabsList>
         
         {/* Aba de Feed e Comentários */}
