@@ -68,7 +68,7 @@ function AutomationEditor({ onSaveSuccess, onCancel, initialData }) {
             return;
         }
         setIsSubmitting(true);
-        const triggerConfig = { post_scope: postScope, post_id: postScope === 'single_post' ? selectedPost : 'all', condition: condition, keywords: condition !== 'any_comment' ? keywords.split(',').map(k => k.trim().toLowerCase()) : [], };
+        const triggerConfig = { post_scope: postScope, post_id: postScope === 'single_post' ? selectedPost : 'all', condition: condition, keywords: condition !== 'any_comment' ? keywords.split(',').map(k => k.trim()) : [], };
         const actionConfig = { reply_message: (action === 'reply_only' || action === 'reply_and_dm') ? replyMessage : null, ai_agent_id: (action === 'reply_with_ai' || action === 'reply_with_ai_and_dm') ? selectedAiAgent : null, };
 
         try {
@@ -79,10 +79,6 @@ function AutomationEditor({ onSaveSuccess, onCancel, initialData }) {
                 
                 if (initialData.actions && initialData.actions.length > 0) {
                     const { error: actionError } = await supabase.from('automation_actions').update({ type: action, config: actionConfig }).eq('trigger_id', initialData.id);
-                    if (actionError) throw actionError;
-                } else {
-                    // Caso não existisse uma ação antes, cria uma nova
-                    const { error: actionError } = await supabase.from('automation_actions').insert({ trigger_id: initialData.id, type: action, config: actionConfig, });
                     if (actionError) throw actionError;
                 }
             } else {
