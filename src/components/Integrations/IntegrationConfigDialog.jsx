@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
 import { Facebook, Loader2 } from 'lucide-react';
+import { useAuth } from '@/contexts/SupabaseAuthContext'; // 1. Importar o useAuth
 
 // Componente para mostrar a lista de páginas (sem alterações aqui)
 function PageSelection({ connectionId, onClose }) {
@@ -86,10 +88,10 @@ function PageSelection({ connectionId, onClose }) {
 export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth(); // 2. Obter o usuário logado
 
   if (!integration) return null;
 
-  // CORRIGIDO: A função de conexão agora pega o ID do usuário e envia para a Edge Function
   const handleFacebookConnect = async () => {
     setIsSubmitting(true);
     try {
@@ -99,7 +101,7 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
       const { data, error } = await supabase.functions.invoke('meta-oauth', { 
         body: { 
           action: 'initiate',
-          userId: session.user.id // <-- Enviando o ID do usuário
+          userId: session.user.id
         } 
       });
 
@@ -118,6 +120,20 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
   
   const isPageSelectionFlow = !!integration.connection_id_for_selection;
   const isOauthFlow = integration.fields.some(field => field.type === 'oauth_button');
+  
+  // 3. Lógica para identificar se é uma integração de webhook
+  const isWebhookFlow = ['kiwify', 'hotmart', 'green', 'ticto', 'kirvano', 'cakto'].includes(integration.id);
+
+  // 4. Geração da URL do Webhook
+  const webhookUrl = isWebhookFlow && user 
+    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/platform-webhooks?user_id=${user.id}&platform=${integration.id}`
+    : '';
+
+  // 5. Função para copiar a URL
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(webhookUrl);
+    toast({ title: "URL Copiada!", description: "Cole esta URL no campo de webhook da plataforma." });
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={() => onClose(false)}>
@@ -129,7 +145,10 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
           <DialogDescription className="text-gray-400">
             {isPageSelectionFlow 
               ? 'Apenas páginas de negócio clássicas e públicas são totalmente compatíveis.' 
-              : `Clique no botão para conectar sua conta de forma segura.`}
+              : isWebhookFlow
+              ? `Configure o webhook para receber notificações da ${integration.name}.`
+              : `Clique no botão para conectar sua conta de forma segura.`
+            }
           </DialogDescription>
         </DialogHeader>
         
@@ -142,8 +161,30 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
               {isSubmitting ? 'Redirecionando...' : 'Conectar com Facebook & Instagram'}
             </Button>
           </div>
+        ) : isWebhookFlow ? (
+          // 6. Novo Bloco de JSX para exibir a URL
+          <div className="py-4 space-y-4">
+            <p className="text-sm text-gray-400">
+              Copie a URL abaixo e cole no campo "Webhook" ou "Postback" nas configurações da {integration.name}.
+            </p>
+            <div className="flex items-center space-x-2">
+                <Input value={webhookUrl} readOnly className="bg-white/10" />
+                <Button onClick={copyToClipboard} variant="outline">Copiar</Button>
+            </div>
+            <p className="text-xs text-gray-500">
+              Esta URL é única para sua conta. Ela enviará os eventos de vendas diretamente para o seu CRM.
+            </p>
+          </div>
         ) : (
-          <p>Outras integrações ainda não implementadas.</p>
+          <div className="py-4">
+             {integration.fields.map(field => (
+                <div key={field.name} className="space-y-2">
+                    <label className="text-sm font-medium text-gray-300">{field.name}</label>
+                    <Input type={field.type} className="bg-white/10" />
+                </div>
+             ))}
+             <Button className="mt-4 w-full">Salvar Configuração</Button>
+          </div>
         )}
       </DialogContent>
     </Dialog>
