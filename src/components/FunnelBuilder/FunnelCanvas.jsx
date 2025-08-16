@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
@@ -24,21 +24,22 @@ export function FunnelCanvas() {
     if (error) {
       toast({ title: "Erro ao buscar funis", description: error.message, variant: "destructive" });
     } else {
-      const formattedData = data.map(f => ({
-        ...f,
-        nodes: f.config?.nodes || [],
-        connections: f.config?.connections || []
-      }));
-      setFunnels(formattedData);
+      setFunnels(data || []);
     }
     setIsLoading(false);
   }, [toast, user]);
 
   useEffect(() => {
-    fetchFunnels();
-  }, [fetchFunnels]);
+    if (user) {
+      fetchFunnels();
+    }
+  }, [fetchFunnels, user]);
 
   const handleCreateFunnel = async (funnelName) => {
+    if (!user) {
+      toast({ title: "Erro", description: "Usuário não autenticado.", variant: "destructive" });
+      return false;
+    }
     const { data, error } = await supabase
       .from('funnels')
       .insert({ name: funnelName, user_id: user.id, config: { nodes: [], connections: [] }, is_active: false })
@@ -48,56 +49,44 @@ export function FunnelCanvas() {
     if (error) {
       toast({ title: "Erro ao criar funil", description: error.message, variant: "destructive" });
       return false;
-    } else {
-      const newFunnel = { ...data, nodes: [], connections: [] };
-      setFunnels(prev => [newFunnel, ...prev]);
-      toast({ title: "Estratégia criada com sucesso!" });
-      setSelectedFunnel(newFunnel);
-      return true;
-    }
+    } 
+    
+    // O objeto `data` já tem a estrutura correta, incluindo `config`
+    const newFunnel = data;
+    setFunnels(prev => [newFunnel, ...prev]);
+    toast({ title: "Estratégia criada com sucesso!" });
+    setSelectedFunnel(newFunnel);
+    return true;
   };
 
-  // ----- LÓGICA CORRIGIDA E CENTRALIZADA AQUI -----
   const handleSaveFunnel = async (updatedFunnel, options = { closeOnSave: false }) => {
-    // Extrai os nós e conexões do objeto do funil
-    const { nodes, connections, ...funnelData } = updatedFunnel;
-    
-    // Prepara o objeto de dados para o Supabase
-    const dataToUpdate = {
-      name: funnelData.name,
-      is_active: funnelData.is_active,
-      config: { 
-        nodes: nodes || [], // Garante que nodes seja sempre um array
-        connections: connections || [] // Garante que connections seja sempre um array
-      }
-    };
-    
     const { error } = await supabase
       .from('funnels')
-      .update(dataToUpdate)
-      .eq('id', funnelData.id);
+      .update({
+        name: updatedFunnel.name,
+        is_active: updatedFunnel.is_active,
+        config: updatedFunnel.config,
+      })
+      .eq('id', updatedFunnel.id);
 
     if (error) {
       toast({ title: "Erro ao salvar o funil", description: error.message, variant: "destructive" });
-      return; // Interrompe a execução em caso de erro
+      return;
     } 
     
-    // Atualiza o estado local para refletir a mudança imediatamente
-    const updatedFunnels = funnels.map(f => f.id === funnelData.id ? { ...f, ...dataToUpdate } : f);
-    setFunnels(updatedFunnels);
+    // Atualiza a lista de funis local com os dados salvos
+    await fetchFunnels();
     
     if (options.closeOnSave) {
-      toast({ title: `Funil "${funnelData.name}" salvo com sucesso!` });
-      setSelectedFunnel(null); // Fecha o editor
+      toast({ title: `Funil "${updatedFunnel.name}" salvo com sucesso!` });
+      setSelectedFunnel(null);
     } else {
-      // Se não for para fechar, apenas atualiza o funil selecionado
-      setSelectedFunnel(prev => ({ ...prev, ...dataToUpdate }));
-      toast({ title: "Progresso salvo!" });
+      // Atualiza o funil selecionado para refletir o estado salvo, sem fechar
+      setSelectedFunnel(updatedFunnel);
     }
   };
   
   const handleDeleteFunnel = async (funnelId) => {
-    // ... (código sem alterações)
     const { error } = await supabase.from('funnels').delete().eq('id', funnelId);
     if (error) {
       toast({ title: "Erro ao deletar funil", variant: "destructive" });
@@ -107,10 +96,11 @@ export function FunnelCanvas() {
     }
   };
 
+  // Se um funil está selecionado, renderiza o Editor
   if (selectedFunnel) {
     return (
       <FunnelEditor 
-        key={selectedFunnel.id} // Adiciona uma key para forçar a remontagem ao selecionar um novo funil
+        key={selectedFunnel.id} // A `key` garante que o editor reinicie ao trocar de funil
         funnel={selectedFunnel} 
         onBack={() => setSelectedFunnel(null)} 
         onSave={handleSaveFunnel}
@@ -118,6 +108,7 @@ export function FunnelCanvas() {
     );
   }
 
+  // Caso contrário, renderiza a Lista
   return (
     <FunnelList
       funnels={funnels}

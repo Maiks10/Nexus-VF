@@ -49,7 +49,7 @@ function FunnelList({ funnels, onSelectFunnel, onCreateFunnel, onDeleteFunnel, i
                             </div>
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="w-8 h-8 opacity-50 group-hover:opacity-100">
+                                <Button variant="ghost" size="icon" className="w-8 h-8 opacity-50 group-hover:opacity-100" onClick={(e) => e.stopPropagation()}>
                                     <MoreHorizontal className="w-4 h-4" />
                                 </Button>
                                 </DropdownMenuTrigger>
@@ -64,11 +64,12 @@ function FunnelList({ funnels, onSelectFunnel, onCreateFunnel, onDeleteFunnel, i
                         </CardHeader>
                         <CardContent>
                             <h3 className="text-white font-semibold truncate">{funnel.name}</h3>
-                            <p className="text-gray-400 text-sm">{funnel.nodes?.length || 0} Nós</p>
+                            {/* ----- CORREÇÃO AQUI: Lendo a contagem do lugar certo ----- */}
+                            <p className="text-gray-400 text-sm">{funnel.config?.nodes?.length || 0} Nós</p>
                         </CardContent>
                     </div>
                     <div className="p-4 pt-0">
-                         {funnel.is_active ? 
+                         {funnel.is_active ?
                             <span className='flex items-center text-xs text-green-400'><Zap className="w-3 h-3 mr-1" /> Ativo</span> :
                             <span className='flex items-center text-xs text-yellow-400'><ZapOff className="w-3 h-3 mr-1" /> Inativo</span>
                         }
