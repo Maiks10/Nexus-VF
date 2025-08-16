@@ -1,7 +1,8 @@
+// src/components/FunnelBuilder/components/FunnelEditor.jsx
+
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { v4 as uuidv4 } from 'uuid';
-// 1. IMPORTAR O REACT FLOW PROVIDER
 import ReactFlow, { Background, Controls, MiniMap, addEdge, useNodesState, useEdgesState, MarkerType, ReactFlowProvider } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Button } from '@/components/ui/button';
@@ -12,9 +13,16 @@ import { availableElements, elementConfig } from '@/components/FunnelBuilder/ele
 import ElementSidebar from '@/components/FunnelBuilder/components/ElementSidebar';
 import NodeConfigurationPanel from '@/components/FunnelBuilder/components/NodeConfigurationPanel';
 import CustomNode from '@/components/FunnelBuilder/components/CustomNode';
+// NOVO: Importar o nosso componente de conexão customizado
+import CustomEdge from '@/components/FunnelBuilder/components/CustomEdge';
 
 const nodeTypes = {
   custom: CustomNode,
+};
+
+// NOVO: Definir os tipos de conexão que o React Flow vai usar
+const edgeTypes = {
+  custom: CustomEdge,
 };
 
 // Componente Interno para o Editor
@@ -48,6 +56,7 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
   const initialEdges = useMemo(() =>
     (funnel.config?.connections || []).map(edge => ({
       id: `e-${edge.start}-${edge.end}`,
+      type: 'custom', // ALTERADO: Usar o tipo customizado
       source: edge.start.split('_')[0],
       target: edge.end.split('_')[0],
       sourceHandle: edge.start,
@@ -68,7 +77,8 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
     fetchAgents();
   }, []);
 
-  const onConnect = useCallback((params) => setEdges((eds) => addEdge({ ...params, markerEnd: { type: MarkerType.ArrowClosed, color: '#a78bfa' }, style: { stroke: '#a78bfa', strokeWidth: 2 }}, eds)), [setEdges]);
+  // ALTERADO: Adicionar o `type: 'custom'` ao criar uma nova conexão
+  const onConnect = useCallback((params) => setEdges((eds) => addEdge({ ...params, type: 'custom', markerEnd: { type: MarkerType.ArrowClosed, color: '#a78bfa' }, style: { stroke: '#a78bfa', strokeWidth: 2 }}, eds)), [setEdges]);
 
   const addNode = (elementType) => {
     const allElements = [...availableElements.triggers, ...availableElements.actions, ...availableElements.logic];
@@ -115,10 +125,8 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
   const selectedNodeData = useMemo(() => nodes.find(n => n.id === selectedNodeId)?.data, [nodes, selectedNodeId]);
 
   return (
-    // ----- CORREÇÃO AQUI: Ordem dos elementos para o layout correto -----
     <div className="flex h-full relative">
       <div className="flex-1 flex flex-col">
-        {/* Header (Barra Superior) */}
         <div className="flex items-center justify-between p-4 border-b border-white/10 z-20 bg-slate-900/50 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={onBack} className="text-gray-400 hover:text-white"><ArrowLeft className="w-5 h-5" /></Button>
@@ -134,7 +142,6 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
             </Button>
           </div>
         </div>
-        {/* Canvas (Área do Funil) */}
         <div className="flex-1 relative bg-slate-800/50 overflow-hidden">
             <ReactFlow
                 nodes={nodes}
@@ -143,6 +150,7 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes} // NOVO: Adicionar a prop edgeTypes
                 onInit={setReactFlowInstance}
                 fitView
                 className="bg-transparent"
@@ -155,7 +163,6 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
             </ReactFlow>
         </div>
       </div>
-      {/* Sidebar de Elementos e Painel de Configuração */}
       <ElementSidebar onAddNode={addNode} />
       <AnimatePresence>
         {selectedNodeData && (
@@ -166,7 +173,6 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
   );
 };
 
-// Componente "wrapper" que adiciona o Provider
 const FunnelEditor = (props) => (
   <ReactFlowProvider>
     <FunnelEditorComponent {...props} />
