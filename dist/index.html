@@ -6,8 +6,8 @@
 		<meta name="generator" content="Hostinger Horizons" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Hostinger Horizons</title>
-		<script type="module" crossorigin src="/assets/index-22791e49.js"></script>
-		<link rel="stylesheet" href="/assets/index-5540803a.css">
+		<script type="module" crossorigin src="/assets/index-3ccb659d.js"></script>
+		<link rel="stylesheet" href="/assets/index-d3b01eab.css">
 		<script type="module">
 window.onerror = (message, source, lineno, colno, errorObj) => {
 	const errorDetails = errorObj ? JSON.stringify({
@@ -18,7 +18,6 @@ window.onerror = (message, source, lineno, colno, errorObj) => {
 		lineno,
 		colno,
 	}) : null;
-
 	window.parent.postMessage({
 		type: 'horizons-runtime-error',
 		message,
@@ -42,19 +41,15 @@ const observer = new MutationObserver((mutations) => {
 		}
 	}
 });
-
 observer.observe(document.documentElement, {
 	childList: true,
 	subtree: true
 });
-
 function handleViteOverlay(node) {
 	if (!node.shadowRoot) {
 		return;
 	}
-
 	const backdrop = node.shadowRoot.querySelector('.backdrop');
-
 	if (backdrop) {
 		const overlayHtml = backdrop.outerHTML;
 		const parser = new DOMParser();
@@ -64,7 +59,6 @@ function handleViteOverlay(node) {
 		const messageText = messageBodyElement ? messageBodyElement.textContent.trim() : '';
 		const fileText = fileElement ? fileElement.textContent.trim() : '';
 		const error = messageText + (fileText ? ' File:' + fileText : '');
-
 		window.parent.postMessage({
 			type: 'horizons-vite-error',
 			error,
@@ -76,9 +70,7 @@ function handleViteOverlay(node) {
 const originalConsoleError = console.error;
 console.error = function(...args) {
 	originalConsoleError.apply(console, args);
-
 	let errorString = '';
-
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg instanceof Error) {
@@ -86,11 +78,9 @@ console.error = function(...args) {
 			break;
 		}
 	}
-
 	if (!errorString) {
 		errorString = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
 	}
-
 	window.parent.postMessage({
 		type: 'horizons-console-error',
 		error: errorString
@@ -99,38 +89,31 @@ console.error = function(...args) {
 </script>
 		<script type="module">
 const originalFetch = window.fetch;
-
 window.fetch = function(...args) {
 	const url = args[0] instanceof Request ? args[0].url : args[0];
-
 	// Skip WebSocket URLs
 	if (url.startsWith('ws:') || url.startsWith('wss:')) {
 		return originalFetch.apply(this, args);
 	}
-
 	return originalFetch.apply(this, args)
 		.then(async response => {
 			const contentType = response.headers.get('Content-Type') || '';
-
 			// Exclude HTML document responses
 			const isDocumentResponse =
 				contentType.includes('text/html') ||
 				contentType.includes('application/xhtml+xml');
-
 			if (!response.ok && !isDocumentResponse) {
 					const responseClone = response.clone();
 					const errorFromRes = await responseClone.text();
 					const requestUrl = response.url;
 					console.error(`Fetch error from ${requestUrl}: ${errorFromRes}`);
 			}
-
 			return response;
 		})
 		.catch(error => {
 			if (!url.match(/.html?$/i)) {
 				console.error(error);
 			}
-
 			throw error;
 		});
 };

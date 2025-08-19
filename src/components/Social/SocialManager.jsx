@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from "@/components/ui/switch";
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from "@/components/ui/use-toast";
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { useAuth } from '@/contexts/AuthContext'; // <-- CORREÇÃO IMPORTANTE AQUI
 
 // --- COMPONENTE DO EDITOR DE AUTOMAÇÃO ---
 function AutomationEditor({ onSaveSuccess, onCancel, initialData }) {
@@ -73,16 +73,14 @@ function AutomationEditor({ onSaveSuccess, onCancel, initialData }) {
 
         try {
             if (initialData) {
-                // LÓGICA DE ATUALIZAÇÃO (EDITAR)
                 const { error: triggerError } = await supabase.from('automation_triggers').update({ name: triggerName, config: triggerConfig }).eq('id', initialData.id);
                 if (triggerError) throw triggerError;
-                
+
                 if (initialData.actions && initialData.actions.length > 0) {
                     const { error: actionError } = await supabase.from('automation_actions').update({ type: action, config: actionConfig }).eq('trigger_id', initialData.id);
                     if (actionError) throw actionError;
                 }
             } else {
-                // LÓGICA DE INSERÇÃO (CRIAR NOVA)
                 const { data: triggerData, error: triggerError } = await supabase.from('automation_triggers').insert({ user_id: user.id, name: triggerName, type: 'keyword_comment', config: triggerConfig, }).select().single();
                 if (triggerError) throw triggerError;
                 const { error: actionError } = await supabase.from('automation_actions').insert({ trigger_id: triggerData.id, type: action, config: actionConfig, });
@@ -127,7 +125,6 @@ function AutomationEditor({ onSaveSuccess, onCancel, initialData }) {
     );
 }
 
-// --- COMPONENTE PARA LISTAR AS AUTOMAÇÕES EXISTENTES ---
 function AutomationsList({ onEdit, onCreateNew }) {
     const [automations, setAutomations] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -175,7 +172,7 @@ function AutomationsList({ onEdit, onCreateNew }) {
                 <div className="space-y-4">
                     {loading && <p className="text-center text-gray-400 py-4">Carregando automações...</p>}
                     {!loading && automations.length === 0 && <p className="text-center text-gray-400 py-4">Nenhuma automação criada ainda.</p>}
-                    {!loading && automations.map(auto => (
+                    {!loading && automations.filter(Boolean).map(auto => ( // <-- CORREÇÃO IMPORTANTE AQUI
                         <div key={auto.id} className="flex items-center justify-between p-3 rounded-md bg-white/5 hover:bg-white/10 transition-colors">
                             <div className="flex items-center gap-4">
                                 <Switch checked={auto.is_active} onCheckedChange={() => handleToggleActive(auto)} />
@@ -193,7 +190,6 @@ function AutomationsList({ onEdit, onCreateNew }) {
     );
 }
 
-// --- COMPONENTE "GERENTE" DA ABA DE AUTOMAÇÕES ---
 function AutomationsManager() {
     const [mode, setMode] = useState('view');
     const [selectedAutomation, setSelectedAutomation] = useState(null);
@@ -211,7 +207,6 @@ function AutomationsManager() {
     );
 }
 
-// --- COMPONENTE PRINCIPAL DO SOCIAL MANAGER ---
 export function SocialManager() {
     return (
         <div className="container mx-auto p-4 md:p-6 lg:p-8">

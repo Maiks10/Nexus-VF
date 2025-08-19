@@ -26,19 +26,15 @@ const observer = new MutationObserver((mutations) => {
 		}
 	}
 });
-
 observer.observe(document.documentElement, {
 	childList: true,
 	subtree: true
 });
-
 function handleViteOverlay(node) {
 	if (!node.shadowRoot) {
 		return;
 	}
-
 	const backdrop = node.shadowRoot.querySelector('.backdrop');
-
 	if (backdrop) {
 		const overlayHtml = backdrop.outerHTML;
 		const parser = new DOMParser();
@@ -48,7 +44,6 @@ function handleViteOverlay(node) {
 		const messageText = messageBodyElement ? messageBodyElement.textContent.trim() : '';
 		const fileText = fileElement ? fileElement.textContent.trim() : '';
 		const error = messageText + (fileText ? ' File:' + fileText : '');
-
 		window.parent.postMessage({
 			type: 'horizons-vite-error',
 			error,
@@ -67,7 +62,6 @@ window.onerror = (message, source, lineno, colno, errorObj) => {
 		lineno,
 		colno,
 	}) : null;
-
 	window.parent.postMessage({
 		type: 'horizons-runtime-error',
 		message,
@@ -80,9 +74,7 @@ const configHorizonsConsoleErrroHandler = `
 const originalConsoleError = console.error;
 console.error = function(...args) {
 	originalConsoleError.apply(console, args);
-
 	let errorString = '';
-
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg instanceof Error) {
@@ -90,11 +82,9 @@ console.error = function(...args) {
 			break;
 		}
 	}
-
 	if (!errorString) {
 		errorString = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
 	}
-
 	window.parent.postMessage({
 		type: 'horizons-console-error',
 		error: errorString
@@ -104,38 +94,31 @@ console.error = function(...args) {
 
 const configWindowFetchMonkeyPatch = `
 const originalFetch = window.fetch;
-
 window.fetch = function(...args) {
 	const url = args[0] instanceof Request ? args[0].url : args[0];
-
 	// Skip WebSocket URLs
 	if (url.startsWith('ws:') || url.startsWith('wss:')) {
 		return originalFetch.apply(this, args);
 	}
-
 	return originalFetch.apply(this, args)
 		.then(async response => {
 			const contentType = response.headers.get('Content-Type') || '';
-
 			// Exclude HTML document responses
 			const isDocumentResponse =
 				contentType.includes('text/html') ||
 				contentType.includes('application/xhtml+xml');
-
 			if (!response.ok && !isDocumentResponse) {
 					const responseClone = response.clone();
 					const errorFromRes = await responseClone.text();
 					const requestUrl = response.url;
 					console.error(\`Fetch error from \${requestUrl}: \${errorFromRes}\`);
 			}
-
 			return response;
 		})
 		.catch(error => {
 			if (!url.match(/\.html?$/i)) {
 				console.error(error);
 			}
-
 			throw error;
 		});
 };
@@ -193,7 +176,7 @@ export default defineConfig({
 	customLogger: logger,
 	plugins: [
 		...(isDev ? [inlineEditPlugin(), editModeDevPlugin()] : []),
-		react(),
+		react({ jsxRuntime: 'classic' }), // <-- A CORREÇÃO ESTÁ AQUI
 		addTransformIndexHtml
 	],
 	server: {
