@@ -25,6 +25,7 @@
     "@radix-ui/react-toast": "^1.1.5",
     "@reactflow/core": "^11.10.1",
     "@supabase/supabase-js": "2.30.0",
+    "axios": "^1.11.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
     "framer-motion": "^10.16.4",
@@ -38,6 +39,7 @@
     "react-router-dom": "^6.16.0",
     "react-xarrows": "^2.0.2",
     "reactflow": "^11.10.1",
+    "recharts": "^3.4.1",
     "tailwind-merge": "^1.1.4",
     "tailwindcss-animate": "^1.0.7",
     "uuid": "^9.0.1"

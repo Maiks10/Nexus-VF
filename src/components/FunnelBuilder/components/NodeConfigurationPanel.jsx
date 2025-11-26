@@ -8,8 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { X, Upload, Loader2, Trash2, Save } from 'lucide-react';
 import { elementConfig } from '@/components/FunnelBuilder/elements';
-import { supabase } from '@/lib/customSupabaseClient';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+// ALTERADO: Importando apiClient
+import apiClient from '@/lib/customSupabaseClient';
+import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/use-toast';
 
 function NodeConfigurationPanel({ node, onUpdate, onClose, agents }) {
@@ -21,24 +22,20 @@ function NodeConfigurationPanel({ node, onUpdate, onClose, agents }) {
   const { user } = useAuth();
   const { toast } = useToast();
   
-  // Usamos uma ref para garantir que o salvamento ao fechar pegue o valor mais recente
   const configRef = useRef(localConfig);
 
   const config = elementConfig[node.type] || {};
   const Icon = config.icon;
 
   useEffect(() => {
-    // Sincroniza o estado local e a ref quando o nó selecionado muda
     setLocalConfig(node.config || {});
     configRef.current = node.config || {};
   }, [node]);
 
   useEffect(() => {
-    // Mantém a ref sempre atualizada com o último estado
     configRef.current = localConfig;
   }, [localConfig]);
   
-  // Efeito de limpeza que salva o valor da ref ao desmontar (fechar o painel)
   useEffect(() => {
     return () => {
       onUpdate(node.id, configRef.current);
@@ -58,27 +55,43 @@ function NodeConfigurationPanel({ node, onUpdate, onClose, agents }) {
     toast({ title: "Configuração Salva!" });
   };
   
+  // ALTERADO: handleFileChange agora usa apiClient para upload
   const handleFileChange = async (event) => {
     const file = event.target.files[0];
     if (!file || !user) return;
     setIsUploading(true);
-    const filePath = `public/funnel_attachments/${user.id}/${node.id}/${Date.now()}_${file.name}`;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('nodeId', node.id); // Enviando o ID do nó para o backend
+
     try {
-      const { error: uploadError } = await supabase.storage.from('funnels').upload(filePath, file);
-      if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from('funnels').getPublicUrl(filePath);
-      setLocalConfig(prev => ({ ...prev, attachmentUrl: data.publicUrl }));
+      // Faz um POST para a nova rota de upload na nossa API
+      const response = await apiClient.post('/api/funnels/upload-attachment', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      
+      // A API deve retornar a URL pública do arquivo
+      const attachmentUrl = response.data.url;
+      setLocalConfig(prev => ({ ...prev, attachmentUrl }));
       toast({ title: "Anexo enviado com sucesso!" });
     } catch (error) {
-      toast({ title: "Erro no Upload", description: error.message, variant: 'destructive' });
+      const errorMessage = error.response?.data?.message || "Ocorreu um erro no upload.";
+      toast({ title: "Erro no Upload", description: errorMessage, variant: 'destructive' });
     } finally {
       setIsUploading(false);
     }
   };
   
   const removeAttachment = () => {
-      setLocalConfig(prev => ({ ...prev, attachmentUrl: null }));
-      toast({ title: "Anexo removido." });
+    setLocalConfig(prev => {
+        const newConfig = { ...prev };
+        delete newConfig.attachmentUrl; // Remove a propriedade da URL
+        return newConfig;
+    });
+    toast({ title: "Anexo removido." });
   }
 
   const renderConfigFields = () => {

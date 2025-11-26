@@ -3,11 +3,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
+// ALTERADO: Importando apiClient
+import apiClient from '@/lib/customSupabaseClient';
 import { Facebook, Loader2 } from 'lucide-react';
-import { useAuth } from '@/contexts/SupabaseAuthContext'; // 1. Importar o useAuth
+import { useAuth } from '@/contexts/AuthContext';
 
-// Componente para mostrar a lista de páginas (sem alterações aqui)
+// Componente para mostrar a lista de páginas
 function PageSelection({ connectionId, onClose }) {
   const [pages, setPages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -18,18 +19,13 @@ function PageSelection({ connectionId, onClose }) {
     async function fetchPages() {
       if (!connectionId) return;
       setLoading(true);
-      const { data, error } = await supabase
-        .from('meta_connections')
-        .select('available_pages')
-        .eq('id', connectionId)
-        .single();
-      
-      if (error || !data) {
-        toast({ title: 'Erro ao buscar páginas', description: error?.message || 'Conexão não encontrada.', variant: 'destructive' });
-        setLoading(false);
-        return;
+      try {
+        // ALTERADO: Busca as páginas da nossa API
+        const response = await apiClient.get(`/api/integrations/meta/pages?connectionId=${connectionId}`);
+        setPages(response.data.available_pages || []);
+      } catch (error) {
+        toast({ title: 'Erro ao buscar páginas', description: error.response?.data?.message || 'Conexão não encontrada.', variant: 'destructive' });
       }
-      setPages(data.available_pages || []);
       setLoading(false);
     }
     fetchPages();
@@ -38,20 +34,15 @@ function PageSelection({ connectionId, onClose }) {
   const handleSelectPage = async (page) => {
     setSubmittingPageId(page.id);
     try {
-      const { error } = await supabase.functions.invoke('meta-finalize-connection', {
-        body: {
-          connection_id: connectionId,
-          page_id: page.id,
-          page_access_token: page.access_token,
-        },
+      // ALTERADO: Finaliza a conexão através da nossa API
+      await apiClient.post('/api/integrations/meta/finalize', {
+        connection_id: connectionId,
+        page_id: page.id,
+        page_access_token: page.access_token,
       });
-
-      if (error) throw error;
-      
-      onClose(true);
-
+      onClose(true); // Sucesso, fecha o diálogo
     } catch (error) {
-      toast({ title: 'Erro ao conectar página', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erro ao conectar página', description: error.response?.data?.message, variant: 'destructive' });
       setSubmittingPageId(null);
     }
   };
@@ -88,48 +79,37 @@ function PageSelection({ connectionId, onClose }) {
 export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
-  const { user } = useAuth(); // 2. Obter o usuário logado
+  const { user } = useAuth();
 
   if (!integration) return null;
 
   const handleFacebookConnect = async () => {
     setIsSubmitting(true);
     try {
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session) throw new Error('Sessão de usuário não encontrada. Faça login novamente.');
-
-      const { data, error } = await supabase.functions.invoke('meta-oauth', { 
-        body: { 
-          action: 'initiate',
-          userId: session.user.id
-        } 
-      });
-
-      if (error) throw error;
-
+      // ALTERADO: Inicia a conexão OAuth através da nossa API
+      const response = await apiClient.post('/api/integrations/meta/initiate-oauth');
+      const data = response.data;
       if (data.redirectUrl) {
         window.location.href = data.redirectUrl;
       } else {
         throw new Error('Não foi possível obter a URL de redirecionamento.');
       }
     } catch (error) {
-      toast({ title: 'Erro ao Conectar', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erro ao Conectar', description: error.response?.data?.message, variant: 'destructive' });
       setIsSubmitting(false);
     }
   };
   
   const isPageSelectionFlow = !!integration.connection_id_for_selection;
   const isOauthFlow = integration.fields.some(field => field.type === 'oauth_button');
-  
-  // 3. Lógica para identificar se é uma integração de webhook
   const isWebhookFlow = ['kiwify', 'hotmart', 'green', 'ticto', 'kirvano', 'cakto'].includes(integration.id);
 
-  // 4. Geração da URL do Webhook
+  // ALTERADO: A URL do webhook agora aponta para a nossa API
+  // O backend usará o token do usuário para saber de quem é o webhook
   const webhookUrl = isWebhookFlow && user 
-    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/platform-webhooks?user_id=${user.id}&platform=${integration.id}`
+    ? `${window.location.origin}/api/webhooks/platform/${integration.id}`
     : '';
 
-  // 5. Função para copiar a URL
   const copyToClipboard = () => {
     navigator.clipboard.writeText(webhookUrl);
     toast({ title: "URL Copiada!", description: "Cole esta URL no campo de webhook da plataforma." });
@@ -162,7 +142,6 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
             </Button>
           </div>
         ) : isWebhookFlow ? (
-          // 6. Novo Bloco de JSX para exibir a URL
           <div className="py-4 space-y-4">
             <p className="text-sm text-gray-400">
               Copie a URL abaixo e cole no campo "Webhook" ou "Postback" nas configurações da {integration.name}.
@@ -177,13 +156,13 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
           </div>
         ) : (
           <div className="py-4">
-             {integration.fields.map(field => (
+              {integration.fields.map(field => (
                 <div key={field.name} className="space-y-2">
                     <label className="text-sm font-medium text-gray-300">{field.name}</label>
                     <Input type={field.type} className="bg-white/10" />
                 </div>
-             ))}
-             <Button className="mt-4 w-full">Salvar Configuração</Button>
+              ))}
+              <Button className="mt-4 w-full">Salvar Configuração</Button>
           </div>
         )}
       </DialogContent>

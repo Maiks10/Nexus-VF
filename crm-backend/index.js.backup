@@ -1,0 +1,631 @@
+const express = require('express');
+const cors = require('cors');
+require('dotenv').config();
+const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const axios = require('axios');
+const { randomUUID } = require('crypto'); // Importar para gerar IDs
+
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_DATABASE,
+});
+
+pool.connect((err, client, release) => {
+  if (err) { return console.error('ERRO CRÍTICO AO CONECTAR COM O BANCO DE DADOS:', err.stack); }
+  client.query('SELECT NOW()', (err, result) => {
+    release();
+    if (err) { return console.error('ERRO CRÍTICO: Erro ao executar query de teste:', err.stack); }
+    console.log('✅ Conexão com o banco de dados bem-sucedida!');
+  });
+});
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) { return res.status(401).json({ error: 'Acesso negado. Nenhum token fornecido.' }); }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) { res.status(403).json({ error: 'Token inválido.' }); }
+};
+
+// --- ROTAS DE AUTENTICAÇÃO ---
+app.post('/api/register', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email e senha são obrigatórios.' });
+  }
+  try {
+    const salt = await bcrypt.genSalt(10);
+    const password_hash = await bcrypt.hash(password, salt);
+    const query = 'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at';
+    const values = [email, password_hash];
+    const result = await pool.query(query, values);
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Erro ao registrar usuário:', error);
+    res.status(500).json({ error: 'Erro interno ao registrar usuário. O email já pode existir.' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email e senha são obrigatórios.' });
+    }
+    try {
+        const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        const user = result.rows[0];
+        if (!user) {
+            return res.status(401).json({ error: 'Credenciais inválidas.' });
+        }
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Credenciais inválidas.' });
+        }
+        const token = jwt.sign(
+            { userId: user.id, email: user.email },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+        res.json({
+            message: "Login bem-sucedido!",
+            token,
+            user: { id: user.id, email: user.email }
+        });
+    } catch (error) {
+        console.error('Erro no login:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.get('/api/auth/profile', verifyToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT id, email, created_at FROM users WHERE id = $1', [req.user.userId]);
+        const user = result.rows[0];
+        if (!user) {
+            return res.status(404).json({ error: 'Usuário não encontrado.' });
+        }
+        res.json(user);
+    } catch (error) {
+        console.error('Erro ao buscar perfil:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+
+// --- ROTAS DE CLIENTES ---
+app.get('/api/clients', verifyToken, async (req, res) => {
+    const { search } = req.query;
+    try {
+        const query = search
+            ? 'SELECT * FROM clients WHERE user_id = $1 AND (name ILIKE $2 OR email ILIKE $2) ORDER BY created_at DESC'
+            : 'SELECT * FROM clients WHERE user_id = $1 ORDER BY created_at DESC';
+        const values = search ? [req.user.userId, `%${search}%`] : [req.user.userId];
+        const result = await pool.query(query, values);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar clientes:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.post('/api/clients', verifyToken, async (req, res) => {
+    const { name, email, phone, value, status, segment, kanban_stage, temperature } = req.body;
+    try {
+        const query = `
+            INSERT INTO clients 
+            (name, email, phone, value, status, segment, kanban_stage, temperature, user_id) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+            RETURNING *`;
+        const values = [
+            name, email || null, phone || null, value || 0, 
+            status || 'Lead', segment || null, kanban_stage || 'new_lead', 
+            temperature || 'cold', req.user.userId
+        ];
+        const result = await pool.query(query, values);
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao criar cliente:', error);
+        res.status(500).json({ error: 'Erro interno ao criar cliente.' });
+    }
+});
+
+app.put('/api/clients/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    const { name, email, phone, value, status, segment, kanban_stage, temperature } = req.body;
+    try {
+        const query = `
+            UPDATE clients 
+            SET name = $1, email = $2, phone = $3, value = $4, status = $5, segment = $6, kanban_stage = $7, temperature = $8
+            WHERE id = $9 AND user_id = $10 RETURNING *`;
+        const values = [name, email, phone, value, status, segment, kanban_stage, temperature, id, req.user.userId];
+        const result = await pool.query(query, values);
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Cliente não encontrado ou não pertence a você.' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao atualizar cliente:', error);
+        res.status(500).json({ error: 'Erro interno ao atualizar cliente.' });
+    }
+});
+
+app.delete('/api/clients/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await pool.query('DELETE FROM clients WHERE id = $1 AND user_id = $2', [id, req.user.userId]);
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Cliente não encontrado ou não autorizado.' });
+        }
+        res.status(200).json({ message: 'Cliente deletado com sucesso.' });
+    } catch (error) {
+        console.error('Erro ao deletar cliente:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.post('/api/clients/import', verifyToken, async (req, res) => {
+    const { clients } = req.body; 
+    if (!clients || !Array.isArray(clients) || clients.length === 0) {
+        return res.status(400).json({ error: 'Nenhum cliente para importar.' });
+    }
+    let clientsAdded = 0;
+    let clientsSkipped = 0;
+    const dbClient = await pool.connect();
+    try {
+        await dbClient.query('BEGIN');
+        for (const c of clients) {
+            if (!c.email || c.email.trim() === '') {
+                clientsSkipped++;
+                continue;
+            }
+            const checkQuery = 'SELECT id FROM clients WHERE email = $1 AND user_id = $2';
+            const checkResult = await dbClient.query(checkQuery, [c.email, req.user.userId]);
+            if (checkResult.rowCount > 0) {
+                clientsSkipped++;
+            } else {
+                const insertQuery = 'INSERT INTO clients (name, email, phone, platform, status, value, kanban_stage, temperature, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)';
+                const values = [c.name, c.email, c.phone, c.platform, c.status, c.value, c.kanban_stage, c.temperature, req.user.userId];
+                await dbClient.query(insertQuery, values);
+                clientsAdded++;
+            }
+        }
+        await dbClient.query('COMMIT');
+        res.status(201).json({ 
+            message: `Importação concluída! ${clientsAdded} clientes adicionados, ${clientsSkipped} ignorados (já existiam ou sem email).`
+        });
+    } catch (error) {
+        await dbClient.query('ROLLBACK');
+        console.error('Erro ao importar clientes:', error);
+        res.status(500).json({ error: 'Erro interno ao importar clientes.' });
+    } finally {
+        dbClient.release();
+    }
+});
+
+app.patch('/api/clients/:id/stage', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    const { kanban_stage } = req.body;
+    if (!kanban_stage) {
+        return res.status(400).json({ error: 'A etapa do kanban é obrigatória.' });
+    }
+    try {
+        const query = 'UPDATE clients SET kanban_stage = $1 WHERE id = $2 AND user_id = $3 RETURNING *';
+        const values = [kanban_stage, id, req.user.userId];
+        const result = await pool.query(query, values);
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Cliente não encontrado ou não autorizado.' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao atualizar etapa do Kanban:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+
+// --- ROTAS DE AGENDAMENTOS (CALENDÁRIO) ---
+app.get('/api/appointments', verifyToken, async (req, res) => {
+    try {
+        const query = 'SELECT * FROM appointments WHERE user_id = $1 ORDER BY start_time ASC';
+        const result = await pool.query(query, [req.user.userId]);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar agendamentos:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.post('/api/appointments', verifyToken, async (req, res) => {
+    const { title, description, start_time, end_time, status } = req.body;
+    if (!title || !start_time || !end_time) {
+        return res.status(400).json({ error: 'Título, data de início e data de fim são obrigatórios.' });
+    }
+    try {
+        const query = `
+            INSERT INTO appointments (title, description, start_time, end_time, status, user_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *`;
+        const values = [title, description, start_time, end_time, status || 'confirmed', req.user.userId];
+        const result = await pool.query(query, values);
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao criar agendamento:', error);
+        res.status(500).json({ error: 'Erro interno ao criar agendamento.' });
+    }
+});
+
+app.put('/api/appointments/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    const { title, description, start_time, end_time } = req.body;
+    try {
+        const query = `
+            UPDATE appointments 
+            SET title = $1, description = $2, start_time = $3, end_time = $4
+            WHERE id = $5 AND user_id = $6 RETURNING *`;
+        const values = [title, description, start_time, end_time, id, req.user.userId];
+        const result = await pool.query(query, values);
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Agendamento não encontrado ou não autorizado.' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao atualizar agendamento:', error);
+        res.status(500).json({ error: 'Erro interno ao atualizar agendamento.' });
+    }
+});
+
+app.delete('/api/appointments/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await pool.query('DELETE FROM appointments WHERE id = $1 AND user_id = $2', [id, req.user.userId]);
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Agendamento não encontrado ou não autorizado.' });
+        }
+        res.status(200).json({ message: 'Agendamento deletado com sucesso.' });
+    } catch (error) {
+        console.error('Erro ao deletar agendamento:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+
+// --- ROTAS DE CHAT DE EQUIPE ---
+app.get('/api/team-chat/messages', verifyToken, async (req, res) => {
+    try {
+        const query = `
+            SELECT tm.*, u.email as "senderEmail"
+            FROM team_messages tm
+            JOIN users u ON tm.user_id = u.id
+            ORDER BY tm.created_at ASC`;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar mensagens do chat:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.post('/api/team-chat/messages', verifyToken, async (req, res) => {
+    const { content } = req.body;
+    if (!content || content.trim() === '') {
+        return res.status(400).json({ error: 'O conteúdo da mensagem não pode ser vazio.' });
+    }
+    try {
+        const query = `
+            INSERT INTO team_messages (content, user_id)
+            VALUES ($1, $2)
+            RETURNING *`;
+        const values = [content, req.user.userId];
+        const result = await pool.query(query, values);
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao enviar mensagem:', error);
+        res.status(500).json({ error: 'Erro interno ao enviar mensagem.' });
+    }
+});
+
+
+// --- ROTAS DE AGENTES DE IA ---
+app.get('/api/ai-agents', verifyToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM ai_agents WHERE user_id = $1 ORDER BY created_at DESC', [req.user.userId]);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar agentes:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+
+// --- ROTAS DE INTEGRAÇÃO WHATSAPP ---
+const createEvolutionAPI = () => axios.create({
+    baseURL: process.env.EVOLUTION_API_URL,
+    headers: { 'apikey': process.env.EVOLUTION_API_KEY }
+});
+
+app.get('/api/whatsapp/instances', verifyToken, async (req, res) => {
+    try {
+        const query = 'SELECT * FROM whatsapp_instances WHERE user_id = $1 ORDER BY created_at ASC';
+        const result = await pool.query(query, [req.user.userId]);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar instâncias do WhatsApp:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.post('/api/whatsapp/instances', verifyToken, async (req, res) => {
+    const { displayName } = req.body;
+    if (!displayName || displayName.trim() === '') {
+        return res.status(400).json({ error: 'O nome da conta é obrigatório.' });
+    }
+    try {
+        const instance_name = `crm_${req.user.userId.toString().slice(0, 8)}_${Date.now()}`;
+        const query = `
+            INSERT INTO whatsapp_instances (display_name, instance_name, status, user_id)
+            VALUES ($1, $2, 'disconnected', $3)
+            RETURNING *`;
+        const values = [displayName, instance_name, req.user.userId];
+        const result = await pool.query(query, values);
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao criar instância do WhatsApp:', error);
+        res.status(500).json({ error: 'Erro interno ao criar instância.' });
+    }
+});
+
+app.delete('/api/whatsapp/instances/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await pool.query('DELETE FROM whatsapp_instances WHERE id = $1 AND user_id = $2', [id, req.user.userId]);
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Instância não encontrada ou não autorizada.' });
+        }
+        res.status(200).json({ message: 'Instância deletada com sucesso.' });
+    } catch (error) {
+        console.error('Erro ao deletar instância do WhatsApp:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.post('/api/whatsapp/instances/:id/sync-status', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    const evolutionAPI = createEvolutionAPI();
+    try {
+        const instanceResult = await pool.query("SELECT instance_name FROM whatsapp_instances WHERE id = $1 AND user_id = $2", [id, req.user.userId]);
+        const instanceName = instanceResult.rows[0]?.instance_name;
+        if (!instanceName) return res.status(404).json({ error: 'Instância não encontrada.' });
+        
+        await pool.query("UPDATE whatsapp_instances SET status = 'connected' WHERE id = $1", [id]);
+        
+        const webhookUrl = `https://nexusflow.info/api/webhooks/evolution`;
+        const webhookPayload = {
+            url: webhookUrl,
+            enabled: true,
+            webhook: {
+                enabled: true,
+                url: webhookUrl,
+                events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+                headers: {
+                    "x-webhook-secret": process.env.EVOLUTION_WEBHOOK_SECRET
+                }
+            }
+        };
+
+        await evolutionAPI.post(`/webhook/set/${instanceName}`, webhookPayload);
+        
+        res.status(200).json({ message: 'Status sincronizado e webhook configurado.' });
+    } catch (error) {
+        console.error("Erro ao sincronizar status e configurar webhook:", error.response?.data || error.message);
+        res.status(500).json({ error: 'Erro ao sincronizar status.' });
+    }
+});
+
+app.post('/api/whatsapp/session', verifyToken, async (req, res) => {
+    const { action, instanceName } = req.body;
+    const evolutionAPI = createEvolutionAPI();
+    try {
+        let response;
+        switch (action) {
+            case 'generate_qr':
+                await evolutionAPI.post(`/instance/create`, {
+                    instanceName,
+                    qrcode: true,
+                    integration: "WHATSAPP-BAILEYS"
+                });
+                response = await evolutionAPI.get(`/instance/connect/${instanceName}`);
+                break;
+            case 'status':
+                response = await evolutionAPI.get(`/instance/connectionState/${instanceName}`);
+                break;
+            case 'logout':
+                response = await evolutionAPI.delete(`/instance/logout/${instanceName}`);
+                await pool.query("UPDATE whatsapp_instances SET status = 'disconnected' WHERE instance_name = $1 AND user_id = $2", [instanceName, req.user.userId]);
+                break;
+            default:
+                return res.status(400).json({ error: 'Ação desconhecida.' });
+        }
+        res.json(response.data);
+    } catch (error) {
+        console.error(`Erro na ação '${action}' da Evolution API:`, error.response?.data || error.message);
+        res.status(500).json({
+            error: 'Falha na comunicação com a API do WhatsApp.',
+            details: error.response ? error.response.data : error.message
+        });
+    }
+});
+
+// --- ROTAS DE ATENDIMENTO (WHATSAPP) ---
+app.get('/api/whatsapp/chats', verifyToken, async (req, res) => {
+    const { instanceName } = req.query;
+    if (!instanceName) return res.status(400).json({ error: "Nome da instância é obrigatório" });
+    try {
+        const query = `
+            SELECT * FROM whatsapp_chats 
+            WHERE user_id = $1 AND instance_name = $2
+            ORDER BY updated_at DESC`;
+        const result = await pool.query(query, [req.user.userId, instanceName]);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar chats do WhatsApp:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.get('/api/whatsapp/messages', verifyToken, async (req, res) => {
+    const { instanceName, chat_jid } = req.query; // Corrigido para query params
+    try {
+        const query = `
+            SELECT * FROM whatsapp_messages
+            WHERE user_id = $1 AND instance_name = $2 AND chat_jid = $3
+            ORDER BY timestamp ASC`;
+        const result = await pool.query(query, [req.user.userId, instanceName, chat_jid]);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar mensagens do WhatsApp:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.post('/api/whatsapp/send-message', verifyToken, async (req, res) => {
+    const { instanceName, to, text } = req.body;
+    const evolutionAPI = createEvolutionAPI();
+    try {
+        const number = to.split('@')[0];
+        await evolutionAPI.post(`/message/sendText/${instanceName}`, { number, textMessage: { text } });
+        res.status(200).json({ message: 'Mensagem enviada.' });
+    } catch (error) {
+        console.error('Erro ao enviar mensagem via Evolution API:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Falha ao enviar mensagem.' });
+    }
+});
+
+app.patch('/api/whatsapp/chats/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    const updates = req.body;
+    const fields = Object.keys(updates);
+    const values = Object.values(updates);
+    if (fields.length === 0) {
+        return res.status(400).json({ error: 'Nenhum campo para atualizar.' });
+    }
+    const setClause = fields.map((field, index) => `"${field}" = $${index + 1}`).join(', ');
+    try {
+        const query = `UPDATE whatsapp_chats SET ${setClause} WHERE id = $${fields.length + 1} AND user_id = $${fields.length + 2} RETURNING *`;
+        const result = await pool.query(query, [...values, id, req.user.userId]);
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao atualizar chat:', error);
+        res.status(500).json({ error: 'Erro ao atualizar chat.' });
+    }
+});
+
+app.patch('/api/whatsapp/chats/:id/read', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    try {
+        await pool.query("UPDATE whatsapp_chats SET unread_count = 0 WHERE id = $1 AND user_id = $2", [id, req.user.userId]);
+        res.status(200).json({ message: 'Chat marcado como lido.' });
+    } catch (error) {
+        console.error('Erro ao marcar chat como lido:', error);
+        res.status(500).json({ error: 'Erro ao marcar chat.' });
+    }
+});
+
+
+// --- ROTA DE WEBHOOK PARA WHATSAPP (VERSÃO CORRIGIDA E MAIS ROBUSTA) ---
+
+// Função helper para extrair o texto da mensagem, baseada na sua função do Supabase
+function pickText(m) {
+  try {
+    return m?.message?.conversation || m?.message?.extendedTextMessage?.text || 
+           m?.message?.ephemeralMessage?.message?.conversation || 
+           m?.message?.ephemeralMessage?.message?.extendedTextMessage?.text || 
+           m?.message?.imageMessage?.caption || m?.message?.videoMessage?.caption || 
+           m?.message?.documentWithCaptionMessage?.message?.documentMessage?.caption || 
+           m?.body || m?.text || "";
+  } catch {
+    return "";
+  }
+}
+
+app.post('/api/webhooks/evolution', async (req, res) => {
+    const webhookData = req.body;
+    const instance = webhookData?.instance;
+    const token = req.headers['x-webhook-secret'];
+
+    if (process.env.EVOLUTION_WEBHOOK_SECRET && token !== process.env.EVOLUTION_WEBHOOK_SECRET) {
+        console.warn(`Webhook recebido com token inválido para instância ${instance}`);
+        return res.status(401).send('Unauthorized');
+    }
+
+    console.log(`--- WEBHOOK RECEBIDO (${webhookData.event}) PARA INSTÂNCIA: ${instance} ---`);
+    console.log('DADOS COMPLETOS:', JSON.stringify(webhookData, null, 2));
+
+    if (webhookData.event === 'messages.upsert' && webhookData.data?.key?.fromMe === false) {
+        const messageData = webhookData.data;
+        const dbClient = await pool.connect();
+        try {
+            const instanceResult = await dbClient.query('SELECT user_id FROM whatsapp_instances WHERE instance_name = $1', [instance]);
+            const userId = instanceResult.rows[0]?.user_id;
+            if (!userId) {
+                console.error(`Webhook ignorado: Instância "${instance}" não encontrada.`);
+                return res.status(200).send('OK. Instance not found.');
+            }
+
+            const chat_jid = messageData.key.remoteJid;
+            const contact_name = messageData.pushName || `Contato ${chat_jid.split('@')[0]}`;
+            const text = pickText(messageData); // Usando a função helper
+            const message_id = messageData.key.id || randomUUID();
+            const timestamp = messageData.messageTimestamp;
+
+            await dbClient.query('BEGIN');
+
+            const upsertChatQuery = `
+                INSERT INTO whatsapp_chats (user_id, instance_name, jid, title, unread_count, last_message, updated_at)
+                VALUES ($1, $2, $3, $4, 1, $5, NOW())
+                ON CONFLICT (user_id, instance_name, jid) 
+                DO UPDATE SET 
+                    unread_count = whatsapp_chats.unread_count + 1,
+                    last_message = EXCLUDED.last_message,
+                    title = EXCLUDED.title,
+                    updated_at = NOW();
+            `;
+            await dbClient.query(upsertChatQuery, [userId, instance, chat_jid, contact_name, text]);
+
+            const insertMessageQuery = `
+                INSERT INTO whatsapp_messages (user_id, instance_name, chat_jid, message_id, from_me, text, timestamp, raw)
+                VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7), $8)`;
+            await dbClient.query(insertMessageQuery, [
+                userId, instance, chat_jid, message_id,
+                false, text, timestamp, webhookData
+            ]);
+            
+            await dbClient.query('COMMIT');
+            console.log(`Mensagem de ${contact_name} salva com sucesso para o usuário ${userId}`);
+
+        } catch (error) {
+            await dbClient.query('ROLLBACK');
+            console.error('ERRO AO PROCESSAR WEBHOOK:', error);
+        } finally {
+            dbClient.release();
+        }
+    }
+    res.status(200).send('OK');
+});
+
+
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});

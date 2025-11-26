@@ -1,40 +1,61 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card, CardContent } from '@/components/ui/card';
-import { Users, MessageSquare, TrendingUp, Clock } from 'lucide-react';
-
-const stats = [
-  {
-    title: 'Total de Clientes',
-    value: '2,847',
-    change: '+12%',
-    icon: Users,
-    color: 'from-blue-500 to-cyan-500'
-  },
-  {
-    title: 'Atendimentos Hoje',
-    value: '156',
-    change: '+8%',
-    icon: MessageSquare,
-    color: 'from-purple-500 to-pink-500'
-  },
-  {
-    title: 'Tempo Médio de Atendimento',
-    value: '5m 32s',
-    change: '-3%',
-    icon: Clock,
-    color: 'from-orange-500 to-red-500'
-  },
-  {
-    title: 'Taxa de Conversão',
-    value: '68%',
-    change: '+15%',
-    icon: TrendingUp,
-    color: 'from-green-500 to-emerald-500'
-  }
-];
+import { DollarSign, TrendingUp, Users, Target } from 'lucide-react';
+import apiClient from '@/lib/customSupabaseClient';
 
 export function StatsCards() {
+  const [stats, setStats] = useState([
+    { title: 'Vendas Hoje', value: 'R$ 0,00', change: '0%', icon: DollarSign, color: 'from-green-500 to-emerald-500' },
+    { title: 'Investimento Ads', value: 'R$ 0,00', change: '0%', icon: Target, color: 'from-red-500 to-orange-500' },
+    { title: 'ROAS', value: '0x', change: '0%', icon: TrendingUp, color: 'from-blue-500 to-cyan-500' },
+    { title: 'Leads Hoje', value: '0', change: '0%', icon: Users, color: 'from-purple-500 to-pink-500' }
+  ]);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const response = await apiClient.get('/api/dashboard/roi');
+        const data = response.data;
+
+        setStats([
+          {
+            title: 'Vendas Hoje',
+            value: `R$ ${data.sales_today.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+            change: '+0%', // Calcular variação real depois
+            icon: DollarSign,
+            color: 'from-green-500 to-emerald-500'
+          },
+          {
+            title: 'Investimento Ads',
+            value: `R$ ${data.spend_today.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+            change: '+0%',
+            icon: Target,
+            color: 'from-red-500 to-orange-500'
+          },
+          {
+            title: 'ROAS',
+            value: `${data.roas}x`,
+            change: '+0%',
+            icon: TrendingUp,
+            color: 'from-blue-500 to-cyan-500'
+          },
+          {
+            title: 'Leads Hoje',
+            value: data.leads_today,
+            change: '+0%',
+            icon: Users,
+            color: 'from-purple-500 to-pink-500'
+          }
+        ]);
+      } catch (error) {
+        console.error('Erro ao buscar stats:', error);
+      }
+    };
+
+    fetchStats();
+  }, []);
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
       {stats.map((stat, index) => (
@@ -50,7 +71,7 @@ export function StatsCards() {
                 <div>
                   <p className="text-sm text-gray-400 mb-1">{stat.title}</p>
                   <p className="text-2xl font-bold text-white">{stat.value}</p>
-                  <p className={`text-sm ${stat.change.startsWith('+') ? 'text-green-400' : 'text-red-400'} mt-1`}>{stat.change} vs mês anterior</p>
+                  {/* <p className={`text-sm ${stat.change.startsWith('+') ? 'text-green-400' : 'text-red-400'} mt-1`}>{stat.change} vs ontem</p> */}
                 </div>
                 <div className={`w-12 h-12 bg-gradient-to-r ${stat.color} rounded-xl flex items-center justify-center`}>
                   <stat.icon className="w-6 h-6 text-white" />

@@ -13,17 +13,21 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const validateToken = () => {
-      if (token) {
+      // ADICIONADO: Verificação para garantir que o token é uma string válida
+      if (token && typeof token === 'string' && token.split('.').length === 3) {
         try {
           const payload = JSON.parse(atob(token.split('.')[1]));
+          // Verifica se o token não expirou
           if (payload.exp * 1000 > Date.now()) {
             setUser({ id: payload.userId, email: payload.email });
           } else {
+            // Token expirado
             localStorage.removeItem('authToken');
             setToken(null);
             setUser(null);
           }
         } catch (e) {
+          // Token inválido (não pôde ser decodificado)
           localStorage.removeItem('authToken');
           setToken(null);
           setUser(null);
@@ -65,9 +69,14 @@ export const AuthProvider = ({ children }) => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Falha no login');
 
-      localStorage.setItem('authToken', data.token);
-      setToken(data.token);
-      setUser(data.user);
+      // ADICIONADO: Garante que o token existe antes de salvar
+      if (data && data.token) {
+        localStorage.setItem('authToken', data.token);
+        setToken(data.token);
+        setUser(data.user);
+      } else {
+        throw new Error('Resposta do servidor inválida.');
+      }
       return { error: null };
     } catch (error) {
       toast({ variant: "destructive", title: "Falha no Login", description: error.message });
@@ -85,8 +94,8 @@ export const AuthProvider = ({ children }) => {
 
   const value = useMemo(() => ({
     user,
-    token, 
-    isAuthenticated: !!token,
+    token,
+    isAuthenticated: !!token && !!user,
     loading,
     signUp,
     signIn,

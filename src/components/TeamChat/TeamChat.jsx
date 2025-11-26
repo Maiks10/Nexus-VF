@@ -1,67 +1,86 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { supabase } from '@/lib/customSupabaseClient';
+// ALTERADO: Importando apiClient
+import apiClient from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Send, Users } from 'lucide-react';
+// ALTERADO: Importando nosso AuthContext
+import { useAuth } from '@/contexts/AuthContext';
 
 export function TeamChat() {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const { toast } = useToast();
+    // ALTERADO: O usuário agora vem do nosso AuthContext
+    const { user: currentUser } = useAuth();
+    const messagesEndRef = useRef(null);
 
-    // Mock user for now. In a real app, this would come from auth context.
-    const currentUser = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'user@example.com' };
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
 
+    // ALTERADO: fetchMessages agora usa apiClient
     const fetchMessages = async () => {
-        const { data, error } = await supabase
-            .from('team_messages')
-            .select('*, user_id(email)') // This might not work if you don't have RLS set up for users to read other users' emails. A profile table is better.
-            .order('created_at', { ascending: true });
-        
-        if (error) {
-            toast({ title: "Erro ao buscar mensagens", description: error.message, variant: 'destructive' });
-        } else {
-            // A temporary fix for the select above, as it might fail
-            const formattedData = data.map(m => ({ ...m, senderEmail: m.user_id?.email || 'Usuário Anônimo' }));
-            setMessages(formattedData);
+        if (!currentUser) return;
+        try {
+            const response = await apiClient.get('/api/team-chat/messages');
+            setMessages(response.data || []);
+        } catch (error) {
+            toast({ title: "Erro ao buscar mensagens", description: error.response?.data?.message, variant: 'destructive' });
         }
     };
 
+    // Efeito para buscar mensagens e iniciar o polling
     useEffect(() => {
         fetchMessages();
 
-        const channel = supabase
-            .channel('team-chat')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'team_messages' }, (payload) => {
-                const updatedMessage = { ...payload.new, senderEmail: 'Novo Usuário' }; // Again, a profile would be better here.
-                setMessages(currentMessages => [...currentMessages, updatedMessage]);
-            })
-            .subscribe();
+        // ALTERADO: Substituímos o Supabase Channel por um intervalo que busca mensagens a cada 5 segundos
+        const intervalId = setInterval(fetchMessages, 5000);
 
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, []);
+        // Limpa o intervalo quando o componente é desmontado
+        return () => clearInterval(intervalId);
+    }, [currentUser]); // Depende do currentUser para começar a buscar
 
+    // Efeito para rolar para o final quando novas mensagens chegam
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages]);
+
+    // ALTERADO: handleSendMessage agora usa apiClient
     const handleSendMessage = async () => {
-        if (!newMessage.trim()) return;
+        if (!newMessage.trim() || !currentUser) return;
 
-        const { error } = await supabase.from('team_messages').insert({
+        // Adiciona a mensagem otimisticamente para uma UI mais rápida
+        const optimisticMessage = {
+            id: `temp-${Date.now()}`,
             content: newMessage,
             user_id: currentUser.id,
-            team_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12' // Mock team_id
-        });
+            senderEmail: currentUser.email,
+            created_at: new Date().toISOString(),
+        };
+        setMessages(currentMessages => [...currentMessages, optimisticMessage]);
+        setNewMessage('');
 
-        if (error) {
-            toast({ title: "Erro ao enviar mensagem", description: error.message, variant: 'destructive' });
-        } else {
-            setNewMessage('');
+        try {
+            await apiClient.post('/api/team-chat/messages', {
+                content: newMessage,
+                // O backend pegará o team_id do usuário logado
+            });
+            // A mensagem real virá na próxima busca do polling, substituindo a otimista se necessário
+        } catch (error) {
+            toast({ title: "Erro ao enviar mensagem", description: error.response?.data?.message, variant: 'destructive' });
+            // Remove a mensagem otimista em caso de erro
+            setMessages(currentMessages => currentMessages.filter(m => m.id !== optimisticMessage.id));
+            setNewMessage(newMessage); // Devolve o texto para o input
         }
     };
+
+    if (!currentUser) {
+        return <p className="text-white text-center p-8">Carregando dados do usuário...</p>;
+    }
 
     return (
         <div className="space-y-6">
@@ -86,6 +105,7 @@ export function TeamChat() {
                                 </div>
                             </motion.div>
                         ))}
+                        <div ref={messagesEndRef} />
                     </div>
                     <div className="flex gap-2">
                         <Input

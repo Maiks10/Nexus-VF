@@ -1,0 +1,13 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Regra 1: Se a requisição for para a API, envia para o backend e PARA.
+  RewriteRule ^api/(.*)$ http://localhost:3001/$1 [P,L]
+
+  # Regra 2: Se a requisição não for para um arquivo ou diretório existente...
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  # Então, redireciona para o index.html (para o React Router funcionar).
+  RewriteRule . /index.html [L]
+</IfModule>

@@ -10,7 +10,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { supabase } from '@/lib/customSupabaseClient';
+// ALTERADO: Importando apiClient no lugar do supabase
+import apiClient from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 
 export function ClientFormDialog({ isOpen, onClose, client }) {
@@ -40,6 +41,7 @@ export function ClientFormDialog({ isOpen, onClose, client }) {
         temperature: client.temperature || 'cold'
       });
     } else {
+      // Reseta o formulário para um novo cliente
       setFormData({
         name: '',
         email: '',
@@ -51,44 +53,41 @@ export function ClientFormDialog({ isOpen, onClose, client }) {
         temperature: 'cold'
       });
     }
-  }, [client]);
+  }, [client, isOpen]); // Adicionado isOpen para garantir o reset quando o diálogo abre
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  // ALTERADO: A função de submit agora usa o apiClient
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
     
-    let error;
-    if (client) {
-      const { error: updateError } = await supabase
-        .from('clients')
-        .update(formData)
-        .eq('id', client.id);
-      error = updateError;
-    } else {
-      const { error: insertError } = await supabase
-        .from('clients')
-        .insert([formData]);
-      error = insertError;
-    }
+    try {
+      if (client) {
+        // Se estiver editando um cliente, usa o método PUT (ou PATCH)
+        await apiClient.put(`/api/clients/${client.id}`, formData);
+      } else {
+        // Se for um novo cliente, usa o método POST
+        await apiClient.post('/api/clients', formData);
+      }
 
-    if (error) {
-      toast({
-        title: `Erro ao salvar cliente`,
-        description: error.message,
-        variant: 'destructive',
-      });
-    } else {
       toast({
         title: `Cliente ${client ? 'atualizado' : 'criado'} com sucesso!`,
       });
-      onClose(true);
+      onClose(true); // Fecha o diálogo e avisa a tabela para recarregar
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || "Ocorreu um erro ao salvar.";
+      toast({
+        title: `Erro ao salvar cliente`,
+        description: errorMessage,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
     }
-    setIsSubmitting(false);
   };
 
   return (
@@ -114,7 +113,7 @@ export function ClientFormDialog({ isOpen, onClose, client }) {
               <Label htmlFor="phone" className="text-right">Telefone</Label>
               <Input id="phone" name="phone" value={formData.phone} onChange={handleChange} className="col-span-3 bg-white/5" />
             </div>
-             <div className="grid grid-cols-4 items-center gap-4">
+              <div className="grid grid-cols-4 items-center gap-4">
               <Label htmlFor="value" className="text-right">Valor</Label>
               <Input id="value" name="value" type="number" value={formData.value} onChange={handleChange} className="col-span-3 bg-white/5" />
             </div>

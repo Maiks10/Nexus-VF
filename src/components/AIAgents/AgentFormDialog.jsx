@@ -11,7 +11,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { supabase } from '@/lib/customSupabaseClient';
+// ALTERADO: Importando apiClient
+import apiClient from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import {
   Select,
@@ -57,7 +58,7 @@ export function AgentFormDialog({ isOpen, onClose, agent }) {
         knowledge_base_url: ''
       });
     }
-  }, [agent]);
+  }, [agent, isOpen]); // Adicionado isOpen para resetar o form
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -72,39 +73,36 @@ export function AgentFormDialog({ isOpen, onClose, agent }) {
     toast({ title: "Upload de arquivo ainda não implementado." });
   };
 
+  // ALTERADO: handleSubmit agora usa apiClient
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
     
-    let error;
     const dataToSubmit = { ...formData };
 
-    if (agent) {
-      const { error: updateError } = await supabase
-        .from('ai_agents')
-        .update(dataToSubmit)
-        .eq('id', agent.id);
-      error = updateError;
-    } else {
-      const { error: insertError } = await supabase
-        .from('ai_agents')
-        .insert([{ ...dataToSubmit, is_active: true }]);
-      error = insertError;
-    }
+    try {
+      if (agent) {
+        // Atualiza um agente existente
+        await apiClient.put(`/api/ai-agents/${agent.id}`, dataToSubmit);
+      } else {
+        // Cria um novo agente
+        await apiClient.post('/api/ai-agents', { ...dataToSubmit, is_active: true });
+      }
 
-    if (error) {
-      toast({
-        title: `Erro ao salvar agente`,
-        description: error.message,
-        variant: 'destructive',
-      });
-    } else {
       toast({
         title: `Agente ${agent ? 'atualizado' : 'criado'} com sucesso!`,
       });
-      onClose(true);
+      onClose(true); // Fecha e avisa para recarregar a lista
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || "Ocorreu um erro ao salvar o agente.";
+      toast({
+        title: `Erro ao salvar agente`,
+        description: errorMessage,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
     }
-    setIsSubmitting(false);
   };
 
   return (
@@ -117,6 +115,7 @@ export function AgentFormDialog({ isOpen, onClose, agent }) {
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+          {/* O JSX do formulário continua o mesmo */}
           <div className="space-y-2">
             <Label htmlFor="name">Nome do Agente</Label>
             <Input id="name" name="name" value={formData.name} onChange={handleChange} className="bg-white/5" required />

@@ -7,20 +7,19 @@ import ReactFlow, { Background, Controls, MiniMap, addEdge, useNodesState, useEd
 import 'reactflow/dist/style.css';
 import { Button } from '@/components/ui/button';
 import { Save, ArrowLeft, Zap, ZapOff } from 'lucide-react';
-import { supabase } from '@/lib/customSupabaseClient';
+// ALTERADO: Importando apiClient
+import apiClient from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { availableElements, elementConfig } from '@/components/FunnelBuilder/elements';
 import ElementSidebar from '@/components/FunnelBuilder/components/ElementSidebar';
 import NodeConfigurationPanel from '@/components/FunnelBuilder/components/NodeConfigurationPanel';
 import CustomNode from '@/components/FunnelBuilder/components/CustomNode';
-// NOVO: Importar o nosso componente de conexão customizado
 import CustomEdge from '@/components/FunnelBuilder/components/CustomEdge';
 
 const nodeTypes = {
   custom: CustomNode,
 };
 
-// NOVO: Definir os tipos de conexão que o React Flow vai usar
 const edgeTypes = {
   custom: CustomEdge,
 };
@@ -56,7 +55,7 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
   const initialEdges = useMemo(() =>
     (funnel.config?.connections || []).map(edge => ({
       id: `e-${edge.start}-${edge.end}`,
-      type: 'custom', // ALTERADO: Usar o tipo customizado
+      type: 'custom',
       source: edge.start.split('_')[0],
       target: edge.end.split('_')[0],
       sourceHandle: edge.start,
@@ -69,15 +68,20 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
+  // ALTERADO: fetchAgents agora usa apiClient
   useEffect(() => {
     const fetchAgents = async () => {
-      const { data } = await supabase.from('ai_agents').select('id, name');
-      if (data) setAgents(data);
+        try {
+            const response = await apiClient.get('/api/ai-agents');
+            setAgents(response.data.map(agent => ({ id: agent.id, name: agent.name }))); // Mapeia para o formato necessário
+        } catch(error) {
+            console.error("Erro ao buscar agentes para o funil:", error);
+            toast({ title: 'Não foi possível carregar os agentes de IA.', variant: 'destructive' });
+        }
     };
     fetchAgents();
-  }, []);
+  }, [toast]);
 
-  // ALTERADO: Adicionar o `type: 'custom'` ao criar uma nova conexão
   const onConnect = useCallback((params) => setEdges((eds) => addEdge({ ...params, type: 'custom', markerEnd: { type: MarkerType.ArrowClosed, color: '#a78bfa' }, style: { stroke: '#a78bfa', strokeWidth: 2 }}, eds)), [setEdges]);
 
   const addNode = (elementType) => {
@@ -127,6 +131,7 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
   return (
     <div className="flex h-full relative">
       <div className="flex-1 flex flex-col">
+        {/* O JSX (parte visual) não sofreu alterações */}
         <div className="flex items-center justify-between p-4 border-b border-white/10 z-20 bg-slate-900/50 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={onBack} className="text-gray-400 hover:text-white"><ArrowLeft className="w-5 h-5" /></Button>
@@ -150,7 +155,7 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
                 nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes} // NOVO: Adicionar a prop edgeTypes
+                edgeTypes={edgeTypes}
                 onInit={setReactFlowInstance}
                 fitView
                 className="bg-transparent"

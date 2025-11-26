@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { useAuth } from '@/contexts/AuthContext'; // <-- CORREÇÃO APLICADA AQUI
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,20 +13,20 @@ export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp } = useAuth(); // Funções vêm do nosso novo AuthContext
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     await signIn(email, password);
-    setLoading(false);
+    // O setLoading(false) será tratado pelo AuthContext, que fará a tela recarregar
   };
 
   const handleSignUp = async (e) => {
     e.preventDefault();
     setLoading(true);
     await signUp(email, password);
-    setLoading(false);
+    setLoading(false); // Mantemos aqui para o usuário poder tentar logar depois
   };
 
   return (

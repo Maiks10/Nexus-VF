@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { supabase } from '@/lib/customSupabaseClient';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+// ALTERADO: Importando apiClient
+import apiClient from '@/lib/customSupabaseClient';
+import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import FunnelList from '@/components/FunnelBuilder/components/FunnelList';
 import FunnelEditor from '@/components/FunnelBuilder/components/FunnelEditor';
@@ -12,19 +13,16 @@ export function FunnelCanvas() {
   const { user } = useAuth();
   const { toast } = useToast();
 
+  // ALTERADO: fetchFunnels agora usa apiClient
   const fetchFunnels = useCallback(async () => {
     if (!user) return;
     setIsLoading(true);
-    const { data, error } = await supabase
-      .from('funnels')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      toast({ title: "Erro ao buscar funis", description: error.message, variant: "destructive" });
-    } else {
-      setFunnels(data || []);
+    try {
+      const response = await apiClient.get('/api/funnels');
+      setFunnels(response.data || []);
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || "Ocorreu um erro ao buscar os funis.";
+      toast({ title: "Erro ao buscar funis", description: errorMessage, variant: "destructive" });
     }
     setIsLoading(false);
   }, [toast, user]);
@@ -35,72 +33,66 @@ export function FunnelCanvas() {
     }
   }, [fetchFunnels, user]);
 
+  // ALTERADO: handleCreateFunnel agora usa apiClient
   const handleCreateFunnel = async (funnelName) => {
     if (!user) {
       toast({ title: "Erro", description: "Usuário não autenticado.", variant: "destructive" });
       return false;
     }
-    const { data, error } = await supabase
-      .from('funnels')
-      .insert({ name: funnelName, user_id: user.id, config: { nodes: [], connections: [] }, is_active: false })
-      .select()
-      .single();
-
-    if (error) {
-      toast({ title: "Erro ao criar funil", description: error.message, variant: "destructive" });
+    try {
+      const response = await apiClient.post('/api/funnels', { name: funnelName });
+      const newFunnel = response.data; // A API deve retornar o funil criado
+      setFunnels(prev => [newFunnel, ...prev]);
+      toast({ title: "Estratégia criada com sucesso!" });
+      setSelectedFunnel(newFunnel);
+      return true;
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || "Ocorreu um erro ao criar o funil.";
+      toast({ title: "Erro ao criar funil", description: errorMessage, variant: "destructive" });
       return false;
-    } 
-    
-    // O objeto `data` já tem a estrutura correta, incluindo `config`
-    const newFunnel = data;
-    setFunnels(prev => [newFunnel, ...prev]);
-    toast({ title: "Estratégia criada com sucesso!" });
-    setSelectedFunnel(newFunnel);
-    return true;
+    }
   };
 
+  // ALTERADO: handleSaveFunnel agora usa apiClient
   const handleSaveFunnel = async (updatedFunnel, options = { closeOnSave: false }) => {
-    const { error } = await supabase
-      .from('funnels')
-      .update({
+    try {
+      await apiClient.put(`/api/funnels/${updatedFunnel.id}`, {
         name: updatedFunnel.name,
         is_active: updatedFunnel.is_active,
         config: updatedFunnel.config,
-      })
-      .eq('id', updatedFunnel.id);
-
-    if (error) {
-      toast({ title: "Erro ao salvar o funil", description: error.message, variant: "destructive" });
-      return;
-    } 
-    
-    // Atualiza a lista de funis local com os dados salvos
-    await fetchFunnels();
-    
-    if (options.closeOnSave) {
-      toast({ title: `Funil "${updatedFunnel.name}" salvo com sucesso!` });
-      setSelectedFunnel(null);
-    } else {
-      // Atualiza o funil selecionado para refletir o estado salvo, sem fechar
-      setSelectedFunnel(updatedFunnel);
+      });
+      
+      await fetchFunnels();
+      
+      if (options.closeOnSave) {
+        toast({ title: `Funil "${updatedFunnel.name}" salvo com sucesso!` });
+        setSelectedFunnel(null);
+      } else {
+        setSelectedFunnel(updatedFunnel);
+      }
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || "Ocorreu um erro ao salvar o funil.";
+      toast({ title: "Erro ao salvar o funil", description: errorMessage, variant: "destructive" });
     }
   };
   
+  // ALTERADO: handleDeleteFunnel agora usa apiClient
   const handleDeleteFunnel = async (funnelId) => {
-    const { error } = await supabase.from('funnels').delete().eq('id', funnelId);
-    if (error) {
-      toast({ title: "Erro ao deletar funil", variant: "destructive" });
-    } else {
+    try {
+      await apiClient.delete(`/api/funnels/${funnelId}`);
       toast({ title: "Funil deletado com sucesso!" });
       setFunnels(funnels.filter(f => f.id !== funnelId));
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || "Ocorreu um erro ao deletar o funil.";
+      toast({ title: "Erro ao deletar funil", description: errorMessage, variant: "destructive" });
     }
   };
 
-  // Se um funil está selecionado, renderiza o Editor
+  // O JSX (parte visual) não sofreu alterações
   if (selectedFunnel) {
     return (
       <FunnelEditor 
-        key={selectedFunnel.id} // A `key` garante que o editor reinicie ao trocar de funil
+        key={selectedFunnel.id}
         funnel={selectedFunnel} 
         onBack={() => setSelectedFunnel(null)} 
         onSave={handleSaveFunnel}
@@ -108,7 +100,6 @@ export function FunnelCanvas() {
     );
   }
 
-  // Caso contrário, renderiza a Lista
   return (
     <FunnelList
       funnels={funnels}

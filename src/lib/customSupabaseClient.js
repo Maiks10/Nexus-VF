@@ -1,6 +1,26 @@
-import { createClient } from '@supabase/supabase-js';
+import axios from 'axios';
 
-const supabaseUrl = 'https://tqcnvhjdyirvfmmkoglp.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxY252aGpkeWlydmZtbWtvZ2xwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ1MzAwODMsImV4cCI6MjA3MDEwNjA4M30.6_VGR0tmWmpF8QxVY73fmh7iuddNWQsrWiKXotN1WqQ';
+// A URL base agora aponta para a raiz do seu site.
+// O proxy reverso que você configurou na VPS vai direcionar 
+// qualquer chamada para /api para o seu backend.
+const API_BASE_URL = '/'; 
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+});
+
+// Este interceptor continua o mesmo, adicionando o token de autenticação.
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+export default apiClient;

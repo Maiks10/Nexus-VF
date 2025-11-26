@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { supabase } from '@/lib/customSupabaseClient';
+// ALTERADO: Importando apiClient
+import apiClient from '@/lib/customSupabaseClient';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from "@/components/ui/use-toast";
 import { MessageSquare, ThumbsUp, CornerDownRight, Loader2, Send, ChevronDown, ChevronUp, Newspaper } from 'lucide-react';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+// ALTERADO: Importando nosso AuthContext
+import { useAuth } from '@/contexts/AuthContext';
 
 // Sub-componente ReplyForm
 function ReplyForm({ comment, onReplySent, onCancel }) {
@@ -26,7 +28,7 @@ function ReplyForm({ comment, onReplySent, onCancel }) {
             comment_id: `temp_${Math.random()}`,
             parent_comment_id: comment.comment_id,
             message,
-            commenter_name: user?.user_metadata?.name || "Você",
+            commenter_name: user?.name || "Você",
             timestamp: new Date().toISOString(),
             platform: comment.platform,
             is_liked: false,
@@ -38,13 +40,15 @@ function ReplyForm({ comment, onReplySent, onCancel }) {
         setMessage('');
 
         try {
-            const { error } = await supabase.functions.invoke('meta-reply-to-comment', {
-                body: { comment_id: comment.comment_id, message: message, connection_id: comment.meta_connection_id, },
+            // ALTERADO: Chama a nossa API para responder
+            await apiClient.post('/api/social/comments/reply', {
+                comment_id: comment.comment_id,
+                message: message,
+                connection_id: comment.meta_connection_id,
             });
-            if (error) throw error;
             toast({ title: "Resposta enviada!", description: "Sua resposta foi postada com sucesso." });
         } catch (error) {
-            toast({ title: "Erro ao enviar resposta", description: error.message, variant: "destructive" });
+            toast({ title: "Erro ao enviar resposta", description: error.response?.data?.message, variant: "destructive" });
         } finally {
             setIsSubmitting(false);
             onCancel();
@@ -74,25 +78,16 @@ export function CommentFeed() {
     const [openPosts, setOpenPosts] = useState(new Set());
     const { toast } = useToast();
 
+    // ALTERADO: Busca os dados de uma única rota na nossa API
     async function fetchCommentsAndPosts() {
         try {
             setLoading(true);
-            const { data: commentsData, error: commentsError } = await supabase.from('social_comments').select('*, meta_connections ( id )').order('timestamp', { ascending: false });
-            if (commentsError) throw commentsError;
+            const response = await apiClient.get('/api/social/feed');
+            const { comments, posts } = response.data;
+            
+            setComments(comments || []);
+            setPostsDetails(posts || {});
 
-            setComments(commentsData || []);
-
-            if (commentsData && commentsData.length > 0) {
-                const postIds = [...new Set(commentsData.map(c => c.post_id))];
-                const connectionId = commentsData[0].meta_connections.id;
-
-                const { data: postsData, error: postsError } = await supabase.functions.invoke('meta-get-post-details', {
-                    body: { post_ids: postIds, connection_id: connectionId },
-                });
-
-                if (postsError) throw postsError;
-                setPostsDetails(postsData.posts);
-            }
         } catch (err) {
             console.error("Erro ao buscar dados:", err);
             setError("Não foi possível carregar os dados.");
@@ -103,24 +98,20 @@ export function CommentFeed() {
 
     useEffect(() => { fetchCommentsAndPosts(); }, []);
 
+    // ALTERADO: handleLikeComment agora usa apiClient
     const handleLikeComment = async (comment) => {
         const originalComments = [...comments];
-        const updatedComments = comments.map(c =>
-            c.id === comment.id ? { ...c, is_liked: true } : c
-        );
+        const updatedComments = comments.map(c => c.id === comment.id ? { ...c, is_liked: true } : c);
         setComments(updatedComments);
 
         try {
-            const { error } = await supabase.functions.invoke('meta-like-comment', {
-                body: {
-                    comment_id: comment.comment_id,
-                    connection_id: comment.meta_connection_id,
-                }
+            await apiClient.post('/api/social/comments/like', {
+                comment_id: comment.comment_id,
+                connection_id: comment.meta_connection_id,
             });
-            if (error) throw error;
             toast({ title: "Comentário curtido!", variant: "default" });
         } catch (error) {
-            toast({ title: "Erro ao curtir", description: error.message, variant: "destructive" });
+            toast({ title: "Erro ao curtir", description: error.response?.data?.message, variant: "destructive" });
             setComments(originalComments);
         }
     };
@@ -142,9 +133,7 @@ export function CommentFeed() {
     const posts = useMemo(() => {
         const groupedByPost = comments.reduce((acc, comment) => {
             const postId = comment.post_id;
-            if (!acc[postId]) {
-                acc[postId] = [];
-            }
+            if (!acc[postId]) acc[postId] = [];
             acc[postId].push(comment);
             return acc;
         }, {});
@@ -189,52 +178,53 @@ export function CommentFeed() {
         );
     }
 
+    // O componente CommentCard e o resto do JSX não precisam de alterações
     const CommentCard = ({ comment, isReply = false }) => {
-        const isLiked = comment.is_liked;
-        const hasReplies = comment.replies && comment.replies.length > 0;
-        const [repliesVisible, setRepliesVisible] = useState(false);
+      const isLiked = comment.is_liked;
+      const hasReplies = comment.replies && comment.replies.length > 0;
+      const [repliesVisible, setRepliesVisible] = useState(false);
 
-        return (
-            <div className={` ${isReply ? 'ml-8 pl-4 border-l-2 border-white/10' : ''}`}>
-                <Card className="glass-effect border-white/10 text-white mt-4">
-                    <CardHeader className="flex flex-row items-center justify-between pb-2">
-                        <div className="flex items-center gap-3">
-                            <Avatar><AvatarFallback className="bg-white/10">{comment.commenter_name.substring(0, 2).toUpperCase()}</AvatarFallback></Avatar>
-                            <div>
-                                <CardTitle className="text-base font-semibold">{comment.commenter_name}</CardTitle>
-                                <p className="text-xs text-gray-400">comentou em {new Date(comment.timestamp).toLocaleString('pt-BR')}</p>
-                            </div>
-                        </div>
-                        <Badge variant={comment.platform === 'facebook' ? 'default' : 'secondary'}>{comment.platform.charAt(0).toUpperCase() + comment.platform.slice(1)}</Badge>
-                    </CardHeader>
-                    <CardContent>
-                        <p className="text-gray-200 whitespace-pre-wrap">{comment.message}</p>
-                        <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <Button size="sm" variant="outline" className={`border-white/10 hover:bg-white/10 ${isLiked ? 'bg-green-500/20 text-green-400 border-green-500/30' : ''}`} onClick={() => handleLikeComment(comment)}>
-                                    <ThumbsUp className="w-4 h-4 mr-2" /> {isLiked ? 'Curtido' : 'Curtir'}
-                                </Button>
-                                <Button size="sm" variant="outline" className="border-white/10 hover:bg-white/10" onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)}>
-                                    <CornerDownRight className="w-4 h-4 mr-2" /> Responder
-                                </Button>
-                            </div>
-                            {hasReplies && (
-                                <Button size="sm" variant="ghost" onClick={() => setRepliesVisible(!repliesVisible)} className="text-xs text-gray-400">
-                                    {repliesVisible ? 'Ocultar' : `Ver ${comment.replies.length} Respostas`}
-                                    {repliesVisible ? <ChevronUp className="w-4 h-4 ml-2" /> : <ChevronDown className="w-4 h-4 ml-2" />}
-                                </Button>
-                            )}
-                        </div>
-                        {replyingTo === comment.id && ( <ReplyForm comment={comment} onReplySent={handleReplyOptimistic} onCancel={() => setReplyingTo(null)} /> )}
-                    </CardContent>
-                </Card>
-                {hasReplies && repliesVisible && (
-                    comment.replies.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)).map(reply => (
-                        <CommentCard key={reply.id} comment={reply} isReply={true} />
-                    ))
+      return (
+        <div className={` ${isReply ? 'ml-8 pl-4 border-l-2 border-white/10' : ''}`}>
+          <Card className="glass-effect border-white/10 text-white mt-4">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div className="flex items-center gap-3">
+                <Avatar><AvatarFallback className="bg-white/10">{comment.commenter_name.substring(0, 2).toUpperCase()}</AvatarFallback></Avatar>
+                <div>
+                  <CardTitle className="text-base font-semibold">{comment.commenter_name}</CardTitle>
+                  <p className="text-xs text-gray-400">comentou em {new Date(comment.timestamp).toLocaleString('pt-BR')}</p>
+                </div>
+              </div>
+              <Badge variant={comment.platform === 'facebook' ? 'default' : 'secondary'}>{comment.platform.charAt(0).toUpperCase() + comment.platform.slice(1)}</Badge>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-200 whitespace-pre-wrap">{comment.message}</p>
+              <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <Button size="sm" variant="outline" className={`border-white/10 hover:bg-white/10 ${isLiked ? 'bg-green-500/20 text-green-400 border-green-500/30' : ''}`} onClick={() => handleLikeComment(comment)}>
+                    <ThumbsUp className="w-4 h-4 mr-2" /> {isLiked ? 'Curtido' : 'Curtir'}
+                  </Button>
+                  <Button size="sm" variant="outline" className="border-white/10 hover:bg-white/10" onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)}>
+                    <CornerDownRight className="w-4 h-4 mr-2" /> Responder
+                  </Button>
+                </div>
+                {hasReplies && (
+                  <Button size="sm" variant="ghost" onClick={() => setRepliesVisible(!repliesVisible)} className="text-xs text-gray-400">
+                    {repliesVisible ? 'Ocultar' : `Ver ${comment.replies.length} Respostas`}
+                    {repliesVisible ? <ChevronUp className="w-4 h-4 ml-2" /> : <ChevronDown className="w-4 h-4 ml-2" />}
+                  </Button>
                 )}
-            </div>
-        );
+              </div>
+              {replyingTo === comment.id && ( <ReplyForm comment={comment} onReplySent={handleReplyOptimistic} onCancel={() => setReplyingTo(null)} /> )}
+            </CardContent>
+          </Card>
+          {hasReplies && repliesVisible && (
+            comment.replies.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)).map(reply => (
+              <CommentCard key={reply.id} comment={reply} isReply={true} />
+            ))
+          )}
+        </div>
+      );
     };
 
     return (

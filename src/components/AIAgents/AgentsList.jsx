@@ -6,7 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Plus, Bot, Settings } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
+// ALTERADO: Importando apiClient
+import apiClient from '@/lib/customSupabaseClient';
 import { AgentFormDialog } from './AgentFormDialog';
 
 export function AgentsList() {
@@ -15,12 +16,14 @@ export function AgentsList() {
   const [selectedAgent, setSelectedAgent] = useState(null);
   const { toast } = useToast();
 
+  // ALTERADO: fetchAgents agora usa apiClient
   const fetchAgents = async () => {
-    const { data, error } = await supabase.from('ai_agents').select('*');
-    if (error) {
-      toast({ title: 'Erro ao buscar agentes', description: error.message, variant: 'destructive' });
-    } else {
-      setAgents(data);
+    try {
+      const response = await apiClient.get('/api/ai-agents');
+      setAgents(response.data);
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || "Ocorreu um erro ao buscar os agentes.";
+      toast({ title: 'Erro ao buscar agentes', description: errorMessage, variant: 'destructive' });
     }
   };
 
@@ -28,18 +31,16 @@ export function AgentsList() {
     fetchAgents();
   }, []);
 
+  // ALTERADO: handleToggleAgent agora usa apiClient
   const handleToggleAgent = async (agent) => {
     const newStatus = !agent.is_active;
-    const { error } = await supabase
-      .from('ai_agents')
-      .update({ is_active: newStatus })
-      .eq('id', agent.id);
-
-    if (error) {
-      toast({ title: 'Erro ao atualizar agente', description: error.message, variant: 'destructive' });
-    } else {
+    try {
+      await apiClient.patch(`/api/ai-agents/${agent.id}`, { is_active: newStatus });
       toast({ title: `Agente ${newStatus ? 'ativado' : 'desativado'}` });
-      fetchAgents();
+      fetchAgents(); // Recarrega a lista para mostrar o novo status
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || "Ocorreu um erro ao atualizar o agente.";
+      toast({ title: 'Erro ao atualizar agente', description: errorMessage, variant: 'destructive' });
     }
   };
 
