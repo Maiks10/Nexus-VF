@@ -526,6 +526,199 @@ const createEvolutionAPI = () => axios.create({
     headers: { 'apikey': process.env.EVOLUTION_API_KEY }
 });
 
+// --- ROTA WHATSAPP SESSION SIMPLIFICADA ---
+app.post('/api/whatsapp/session', verifyToken, async (req, res) => {
+    const { action, instanceName } = req.body;
+    const evolutionAPI = createEvolutionAPI();
+
+    console.log(`[Backend] Ação: ${action} | Instância: ${instanceName}`);
+
+    try {
+        if (action === 'generate_qr') {
+            // 1. TENTA CRIAR (Se falhar porque existe, ignoramos e seguimos)
+            try {
+                await evolutionAPI.post(`/instance/create`, {
+                    instanceName,
+                    token: "",
+                    qrcode: true,
+                    integration: "WHATSAPP-BAILEYS",
+                    webhook: {
+                        url: process.env.WEBHOOK_URL || "http://localhost:3001/api/webhooks/evolution",
+                        byEvents: false,
+                        base64: false,
+                        headers: { "x-webhook-secret": process.env.EVOLUTION_WEBHOOK_SECRET || "123" },
+                        events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
+                    }
+                });
+                console.log(`[Backend] Instância ${instanceName} criada.`);
+            } catch (e) {
+                // Se o erro for "Forbidden" ou "already in use", é bom sinal: a instância já existe!
+                console.log(`[Backend] Aviso: Instância já existia, prosseguindo para buscar QR.`);
+            }
+
+            // 2. PEDE O QR CODE (Esta é a chave para parar o loop)
+            // O endpoint /instance/connect devolve o QR Code mesmo se a instância já existir
+            try {
+                console.log(`[Backend] Buscando QR Code no /connect...`);
+                const connectRes = await evolutionAPI.get(`/instance/connect/${instanceName}`);
+
+                // Retornamos exatamente o que a Evolution manda. O Frontend que se vire para achar o "qrcode.base64" ou "base64".
+                console.log('[Backend] QR Code encontrado e enviado.');
+                res.json(connectRes.data);
+            } catch (connectError) {
+                console.error('[Backend] Falha ao buscar QR:', connectError.message);
+                // Se falhar aqui, retornamos um erro JSON para o frontend parar de tentar
+                res.status(500).json({ error: 'Não foi possível obter o QR Code da Evolution.' });
+            }
+
+        } else if (action === 'status') {
+            const r = await evolutionAPI.get(`/instance/connectionState/${instanceName}`);
+            res.json(r.data);
+        } else if (action === 'logout') {
+            try { await evolutionAPI.delete(`/instance/logout/${instanceName}`); } catch (e) { }
+            await pool.query("UPDATE whatsapp_instances SET status = 'disconnected' WHERE instance_name = $1", [instanceName]);
+            res.json({ status: 'logged_out' });
+        }
+    } catch (error) {
+        console.error('[Backend] Erro Geral:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// --- ROTAS DE INSTÂNCIAS (SIMPLIFICADAS) ---
+app.get('/api/whatsapp/instances', verifyToken, async (req, res) => {
+    const r = await pool.query('SELECT * FROM whatsapp_instances WHERE user_id = $1', [req.user.userId]);
+    res.json(r.rows);
+});
+
+app.post('/api/whatsapp/instances', verifyToken, async (req, res) => {
+    const instance_name = `crm_${req.user.userId}_${Date.now()}`;
+    const r = await pool.query(`INSERT INTO whatsapp_instances (display_name, instance_name, status, user_id) VALUES ($1, $2, 'disconnected', $3) RETURNING *`, [req.body.displayName, instance_name, req.user.userId]);
+    res.status(201).json(r.rows[0]);
+});
+
+app.delete('/api/whatsapp/instances/:id', verifyToken, async (req, res) => {
+    const check = await pool.query('SELECT instance_name FROM whatsapp_instances WHERE id = $1', [req.params.id]);
+    if (check.rows.length) {
+        const api = createEvolutionAPI();
+        await api.delete(`/instance/delete/${check.rows[0].instance_name}`).catch(() => { });
+    }
+    await pool.query('DELETE FROM whatsapp_instances WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+});
+
+// --- ROTAS DE ATENDIMENTO (WHATSAPP) ---
+// (Mantidas do código original para preservar funcionalidade de chat)
+app.get('/api/whatsapp/chats', verifyToken, async (req, res) => {
+    const { instanceName } = req.query;
+    if (!instanceName) return res.status(400).json({ error: "Nome da instância é obrigatório" });
+    try {
+        const query = `
+            SELECT * FROM whatsapp_chats 
+            WHERE user_id = $1 AND instance_name = $2
+            ORDER BY updated_at DESC`;
+        const result = await pool.query(query, [req.user.userId, instanceName]);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar chats do WhatsApp:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.get('/api/whatsapp/messages', verifyToken, async (req, res) => {
+    const { instanceName, chat_jid } = req.query;
+    try {
+        const query = `
+            SELECT * FROM whatsapp_messages
+            WHERE user_id = $1 AND instance_name = $2 AND chat_jid = $3
+            ORDER BY timestamp ASC`;
+        const result = await pool.query(query, [req.user.userId, instanceName, chat_jid]);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar mensagens do WhatsApp:', error);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
+    }
+});
+
+app.post('/api/whatsapp/send-message', verifyToken, async (req, res) => {
+    const { instanceName, to, text } = req.body;
+    const evolutionAPI = createEvolutionAPI();
+    try {
+        const number = to.split('@')[0];
+        await evolutionAPI.post(`/message/sendText/${instanceName}`, { number, textMessage: { text } });
+        res.status(200).json({ message: 'Mensagem enviada.' });
+    } catch (error) {
+        console.error('Erro ao enviar mensagem via Evolution API:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Falha ao enviar mensagem.' });
+    }
+});
+
+app.patch('/api/whatsapp/chats/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    const updates = req.body;
+    const fields = Object.keys(updates);
+    const values = Object.values(updates);
+    if (fields.length === 0) {
+        return res.status(400).json({ error: 'Nenhum campo para atualizar.' });
+    }
+    const setClause = fields.map((field, index) => `"${field}" = $${index + 1}`).join(', ');
+    try {
+        const query = `UPDATE whatsapp_chats SET ${setClause} WHERE id = $${fields.length + 1} AND user_id = $${fields.length + 2} RETURNING *`;
+        const result = await pool.query(query, [...values, id, req.user.userId]);
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao atualizar chat:', error);
+        res.status(500).json({ error: 'Erro ao atualizar chat.' });
+    }
+});
+
+app.patch('/api/whatsapp/chats/:id/read', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    try {
+        await pool.query("UPDATE whatsapp_chats SET unread_count = 0 WHERE id = $1 AND user_id = $2", [id, req.user.userId]);
+        res.status(200).json({ message: 'Chat marcado como lido.' });
+    } catch (error) {
+        console.error('Erro ao marcar chat como lido:', error);
+        res.status(500).json({ error: 'Erro ao marcar chat.' });
+    }
+});
+
+// --- WEBHOOK (SIMPLIFICADO) ---
+app.post('/api/webhooks/evolution', (req, res) => {
+    const { data, instance } = req.body;
+    if (data?.status) console.log(`[Webhook] ${instance}: ${data.status}`);
+    res.send('OK');
+});
+
+app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
+
+// --- ROTA DE LIMPEZA DE FANTASMAS (NOVA) ---
+app.delete('/api/admin/cleanup-instances', async (req, res) => {
+    const evolutionAPI = createEvolutionAPI();
+    try {
+        console.log('Iniciando limpeza de instâncias na Evolution...');
+        const instances = await evolutionAPI.get('/instance/fetchInstances');
+        const list = instances.data || [];
+
+        let deletedCount = 0;
+        for (const inst of list) {
+            // Deleta qualquer instancia que comece com "crm_"
+            if (inst.instance?.instanceName && inst.instance.instanceName.startsWith('crm_')) {
+                console.log(`Deletando fantasma: ${inst.instance.instanceName}`);
+                await evolutionAPI.delete(`/instance/delete/${inst.instance.instanceName}`);
+                deletedCount++;
+            }
+        }
+        // Limpa também do banco para garantir sincronia
+        await pool.query("DELETE FROM whatsapp_instances");
+
+        res.json({ message: `Limpeza concluída. ${deletedCount} instâncias removidas.` });
+    } catch (error) {
+        console.error('Erro na limpeza:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.get('/api/whatsapp/instances', verifyToken, async (req, res) => {
     try {
         const query = 'SELECT * FROM whatsapp_instances WHERE user_id = $1 ORDER BY created_at ASC';
@@ -543,7 +736,7 @@ app.post('/api/whatsapp/instances', verifyToken, async (req, res) => {
         return res.status(400).json({ error: 'O nome da conta é obrigatório.' });
     }
     try {
-        const instance_name = `crm_${req.user.userId.toString().slice(0, 8)}_${Date.now()}`;
+        const instance_name = `crm_${req.user.userId}_${Date.now()}`;
         const query = `
             INSERT INTO whatsapp_instances (display_name, instance_name, status, user_id)
             VALUES ($1, $2, 'disconnected', $3)
@@ -559,16 +752,14 @@ app.post('/api/whatsapp/instances', verifyToken, async (req, res) => {
 
 app.delete('/api/whatsapp/instances/:id', verifyToken, async (req, res) => {
     const { id } = req.params;
-    try {
-        const result = await pool.query('DELETE FROM whatsapp_instances WHERE id = $1 AND user_id = $2', [id, req.user.userId]);
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: 'Instância não encontrada ou não autorizada.' });
-        }
-        res.status(200).json({ message: 'Instância deletada com sucesso.' });
-    } catch (error) {
-        console.error('Erro ao deletar instância do WhatsApp:', error);
-        res.status(500).json({ error: 'Erro interno no servidor.' });
+    // Primeiro pega o nome para deletar na Evolution
+    const check = await pool.query('SELECT instance_name FROM whatsapp_instances WHERE id = $1', [id]);
+    if (check.rows.length > 0) {
+        const evolutionAPI = createEvolutionAPI();
+        await evolutionAPI.delete(`/instance/delete/${check.rows[0].instance_name}`).catch(e => console.log('Erro ao deletar na API (ok se não existir)'));
     }
+    await pool.query('DELETE FROM whatsapp_instances WHERE id = $1', [id]);
+    res.json({ success: true });
 });
 
 app.post('/api/whatsapp/instances/:id/sync-status', verifyToken, async (req, res) => {
@@ -601,199 +792,124 @@ app.post('/api/whatsapp/instances/:id/sync-status', verifyToken, async (req, res
     }
 });
 
+// --- ROTA WHATSAPP SESSION CORRIGIDA ---
 app.post('/api/whatsapp/session', verifyToken, async (req, res) => {
     const { action, instanceName } = req.body;
-    const evolutionAPI = axios.create({
-        baseURL: process.env.EVOLUTION_API_URL,
-        headers: {
-            'apikey': process.env.EVOLUTION_API_KEY,
-            'Content-Type': 'application/json'
-        },
-        timeout: 60000 // Aumentado para 60 segundos devido à lentidão da rede
-    });
+    const evolutionAPI = createEvolutionAPI();
+
+    console.log(`[Backend] Ação: ${action} | Instância: ${instanceName}`);
+
     try {
-        let response;
-        switch (action) {
-            case 'generate_qr':
-                try {
-                    // WORKAROUND: Deleta a instância antes de criar para evitar o loop infinito
-                    // Referência: https://github.com/EvolutionAPI/evolution-api/issues
-                    try {
-                        await evolutionAPI.delete(`/instance/delete/${instanceName}`);
-                        console.log(`Instância ${instanceName} deletada (cleanup antes de criar)`);
-                        // Aguarda 2 segundos para garantir que a instância foi removida
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                    } catch (deleteError) {
-                        // Ignora erro se a instância não existir
-                        console.log(`Instância ${instanceName} não existia ou já foi deletada`);
+        if (action === 'generate_qr') {
+            // 1. Tenta criar
+            try {
+                await evolutionAPI.post(`/instance/create`, {
+                    instanceName,
+                    token: "",
+                    qrcode: true,
+                    integration: "WHATSAPP-BAILEYS",
+                    webhook: {
+                        url: process.env.WEBHOOK_URL || "http://localhost:3001/api/webhooks/evolution",
+                        byEvents: false,
+                        base64: false,
+                        headers: { "x-webhook-secret": process.env.EVOLUTION_WEBHOOK_SECRET || "123" },
+                        events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
                     }
+                });
+                console.log(`[Backend] Instância ${instanceName} criada.`);
+            } catch (e) {
+                // Ignora erro se já existe
+                console.log(`[Backend] Aviso na criação (pode já existir): ${e.response?.data?.error || e.message}`);
+            }
 
-                    const createResponse = await evolutionAPI.post(`/instance/create`, {
-                        instanceName,
-                        token: "",
-                        qrcode: true,
-                        integration: "WHATSAPP-BAILEYS",
-                        webhook: {
-                            url: process.env.WEBHOOK_URL || "http://172.17.0.1:3001/api/webhooks/evolution",
-                            byEvents: false,
-                            base64: true,
-                            headers: {
-                                "x-webhook-secret": process.env.EVOLUTION_WEBHOOK_SECRET
-                            },
-                            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"]
-                        }
-                    });
+            // 2. Tenta conectar e PEGAR O QR CODE
+            console.log(`[Backend] Buscando QR Code para ${instanceName}...`);
+            try {
+                const connectRes = await evolutionAPI.get(`/instance/connect/${instanceName}`);
 
-                    // Se a criação retornar o QR Code, usamos ele diretamente
-                    if (createResponse.data && (createResponse.data.qrcode?.base64 || createResponse.data.base64)) {
-                        response = createResponse;
-                        console.log('QR Code obtido na criação da instância.');
-                    } else {
-                        console.log('QR Code não veio na criação. Verificando estratégia de conexão...');
+                // LOG DO DEBUG PARA VOCÊ VER NO TERMINAL
+                console.log('--- RESPOSTA DA EVOLUTION ---');
+                console.log(JSON.stringify(connectRes.data, null, 2));
+                console.log('-------------------------------');
 
-                        // ESTRATÉGIA HÍBRIDA: QR Code (Polling) ou Pairing Code
+                // Se a Evolution retornar o base64 direto ou dentro de um objeto, o frontend precisa receber
+                res.json(connectRes.data);
+            } catch (connErr) {
+                console.error(`[Backend] Erro no /connect:`, connErr.response?.data || connErr.message);
 
-                        // Se veio um número de telefone no request, tentamos Pairing Code
-                        if (req.body.number) {
-                            console.log(`Tentando gerar Pairing Code para o número: ${req.body.number}`);
-                            try {
-                                // Pequeno delay para garantir que a instância subiu
-                                await new Promise(resolve => setTimeout(resolve, 2000));
-
-                                const pairingResponse = await evolutionAPI.get(`/instance/connect/${instanceName}?number=${req.body.number}`);
-                                if (pairingResponse.data && pairingResponse.data.pairingCode) {
-                                    console.log('Pairing Code gerado com sucesso:', pairingResponse.data.pairingCode);
-                                    response = {
-                                        data: {
-                                            pairingCode: pairingResponse.data.pairingCode,
-                                            code: pairingResponse.data.code,
-                                            count: pairingResponse.data.count
-                                        }
-                                    };
-                                } else {
-                                    console.log('Falha ao gerar Pairing Code:', pairingResponse.data);
-                                    throw new Error('Pairing Code não retornado pela API');
-                                }
-                            } catch (pairingError) {
-                                console.error('Erro ao solicitar Pairing Code:', pairingError.message);
-                                // Não falha aqui, deixa cair no polling de QR como fallback (embora improvável funcionar se for v2.3)
-                            }
-                        }
-
-                        // Se não conseguiu Pairing Code (ou não tinha número), tenta Polling de QR Code
-                        if (!response || !response.data?.pairingCode) {
-                            console.log('Iniciando polling ativo para QR Code...');
-                            let attempts = 0;
-                            const maxAttempts = 15; // 15 segundos (15 x 1s)
-
-                            while (attempts < maxAttempts) {
-                                try {
-                                    // Primeiro: verifica o cache do webhook (se chegou)
-                                    if (qrCodeCache[instanceName]) {
-                                        console.log(`[Tentativa ${attempts + 1}] QR Code encontrado no cache webhook!`);
-                                        response = {
-                                            data: {
-                                                qrcode: {
-                                                    base64: qrCodeCache[instanceName]
-                                                }
-                                            }
-                                        };
-                                        break;
-                                    }
-
-                                    // Segundo: tenta buscar diretamente do endpoint de estado
-                                    const stateResponse = await evolutionAPI.get(`/instance/connectionState/${instanceName}`);
-                                    if (stateResponse.data?.qrcode?.code || stateResponse.data?.qr || stateResponse.data?.base64) {
-                                        console.log(`[Tentativa ${attempts + 1}] QR Code encontrado via connectionState!`);
-                                        response = { data: { qrcode: { base64: stateResponse.data.qrcode?.code || stateResponse.data.qr || stateResponse.data.base64 } } };
-                                        break;
-                                    }
-
-                                    console.log(`[Tentativa ${attempts + 1}/${maxAttempts}] QR Code ainda não disponível. Aguardando...`);
-                                } catch (pollError) {
-                                    console.log(`[Tentativa ${attempts + 1}] Erro ao buscar QR: ${pollError.message}`);
-                                }
-
-                                await new Promise(resolve => setTimeout(resolve, 1000));
-                                attempts++;
-                            }
-
-                            // Fallback final: tenta /instance/connect (apenas se não for pairing code)
-                            if (!response || (!response.data?.qrcode?.base64 && !response.data?.pairingCode)) {
-                                console.log('Fallback final: chamando /instance/connect...');
-                                try {
-                                    const fallbackResponse = await evolutionAPI.get(`/instance/connect/${instanceName}`);
-                                    // Se o fallback retornar pairing code (algumas versões retornam aqui)
-                                    if (fallbackResponse.data?.pairingCode) {
-                                        response = fallbackResponse;
-                                    } else {
-                                        response = fallbackResponse;
-                                    }
-                                }
-                                catch (fallbackError) {
-                                    console.log('Fallback /connect também falhou:', fallbackError.message);
-                                }
-                            }
-                        }
-                    }
-                } catch (error) {
-                    if (error.response?.data?.error === 'Forbidden' || error.response?.data?.response?.message?.[0]?.includes('already in use')) {
-                        console.log(`Instância ${instanceName} já existe. Atualizando webhook...`);
-                        await evolutionAPI.post(`/webhook/set/${instanceName}`, {
-                            webhook: {
-                                url: process.env.WEBHOOK_URL || "http://172.17.0.1:3001/api/webhooks/evolution",
-                                enabled: true,
-                                byEvents: false,
-                                base64: true,
-                                headers: {
-                                    "x-webhook-secret": process.env.EVOLUTION_WEBHOOK_SECRET
-                                },
-                                events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"]
-                            }
-                        });
-
-                        // Se já existe, verifica cache ou tenta conectar
-                        if (qrCodeCache[instanceName]) {
-                            response = { data: { qrcode: { base64: qrCodeCache[instanceName] } } };
-                        } else {
-                            response = await evolutionAPI.get(`/instance/connect/${instanceName}`);
-                        }
-                    } else {
-                        throw error;
-                    }
+                // Se der erro 403 ou similar, tentamos um logout e reconectamos
+                if (connErr.response?.status === 403 || connErr.response?.data?.error?.includes('Log out')) {
+                    console.log('[Backend] Tentando logout forçado antes de reconectar...');
+                    await evolutionAPI.delete(`/instance/logout/${instanceName}`).catch(() => { });
+                    const retryRes = await evolutionAPI.get(`/instance/connect/${instanceName}`);
+                    res.json(retryRes.data);
+                } else {
+                    throw connErr;
                 }
-
-                console.log('--- DEBUG QR CODE GENERATION ---');
-                console.log('Instance:', instanceName);
-                if (response?.data) {
-                    // console.log('Response Data:', JSON.stringify(response.data, null, 2));
-                }
-                break;
-            case 'status':
-                response = await evolutionAPI.get(`/instance/connectionState/${instanceName}`);
-                // Se tivermos QR code em cache e o status for connecting/qr, injetamos na resposta
-                if (qrCodeCache[instanceName] && (!response.data?.instance?.state || response.data.instance.state === 'connecting' || response.data.instance.state === 'qr')) {
-                    if (!response.data) response.data = {};
-                    if (!response.data.instance) response.data.instance = {};
-                    // Injeta como qrcode.base64 para o frontend pegar
-                    response.data.qrcode = { base64: qrCodeCache[instanceName] };
-                }
-                break;
-            case 'logout':
-                response = await evolutionAPI.delete(`/instance/logout/${instanceName}`);
-                await pool.query("UPDATE whatsapp_instances SET status = 'disconnected' WHERE instance_name = $1 AND user_id = $2", [instanceName, req.user.userId]);
-                break;
-            default:
-                return res.status(400).json({ error: 'Ação desconhecida.' });
+            }
         }
-        res.json(response.data);
+        else if (action === 'status') {
+            const r = await evolutionAPI.get(`/instance/connectionState/${instanceName}`);
+            res.json(r.data);
+        }
+        else if (action === 'logout') {
+            await evolutionAPI.delete(`/instance/logout/${instanceName}`);
+            await pool.query("UPDATE whatsapp_instances SET status = 'disconnected' WHERE instance_name = $1", [instanceName]);
+            res.json({ status: 'logged_out' });
+        }
     } catch (error) {
-        console.error(`Erro na ação '${action}' da Evolution API:`, error.response?.data || error.message);
-        res.status(500).json({
-            error: 'Falha na comunicação com a API do WhatsApp.',
-            details: error.response ? error.response.data : error.message
-        });
+        console.error('[Backend] Erro Geral:', error.message);
+        res.status(500).json({ error: 'Erro interno', details: error.message });
     }
+});
+
+// --- ROTA DE LIMPEZA DE FANTASMAS (NOVA) ---
+app.delete('/api/admin/cleanup-instances', async (req, res) => {
+    const evolutionAPI = createEvolutionAPI();
+    try {
+        console.log('Iniciando limpeza de instâncias na Evolution...');
+        const instances = await evolutionAPI.get('/instance/fetchInstances');
+        const list = instances.data || [];
+
+        let deletedCount = 0;
+        for (const inst of list) {
+            // Deleta qualquer instancia que comece com "crm_"
+            if (inst.instance?.instanceName && inst.instance.instanceName.startsWith('crm_')) {
+                console.log(`Deletando fantasma: ${inst.instance.instanceName}`);
+                await evolutionAPI.delete(`/instance/delete/${inst.instance.instanceName}`);
+                deletedCount++;
+            }
+        }
+        // Limpa também do banco para garantir sincronia
+        await pool.query("DELETE FROM whatsapp_instances");
+
+        res.json({ message: `Limpeza concluída. ${deletedCount} instâncias removidas.` });
+    } catch (error) {
+        console.error('Erro na limpeza:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// --- ROTAS DE INSTÂNCIAS (SIMPLIFICADAS) ---
+app.get('/api/whatsapp/instances', verifyToken, async (req, res) => {
+    const r = await pool.query('SELECT * FROM whatsapp_instances WHERE user_id = $1', [req.user.userId]);
+    res.json(r.rows);
+});
+
+app.post('/api/whatsapp/instances', verifyToken, async (req, res) => {
+    const instance_name = `crm_${req.user.userId}_${Date.now()}`;
+    const r = await pool.query(`INSERT INTO whatsapp_instances (display_name, instance_name, status, user_id) VALUES ($1, $2, 'disconnected', $3) RETURNING *`, [req.body.displayName, instance_name, req.user.userId]);
+    res.status(201).json(r.rows[0]);
+});
+
+app.delete('/api/whatsapp/instances/:id', verifyToken, async (req, res) => {
+    const check = await pool.query('SELECT instance_name FROM whatsapp_instances WHERE id = $1', [req.params.id]);
+    if (check.rows.length) {
+        const evolutionAPI = createEvolutionAPI();
+        await evolutionAPI.delete(`/instance/delete/${check.rows[0].instance_name}`).catch(() => { });
+    }
+    await pool.query('DELETE FROM whatsapp_instances WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
 });
 
 // --- ROTAS DE ATENDIMENTO (WHATSAPP) ---

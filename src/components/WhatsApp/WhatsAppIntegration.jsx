@@ -109,8 +109,8 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
       const payload = phoneNumber ? { number: phoneNumber } : {};
       const data = await EvolutionService.connectInstance(instance.instance_name, payload);
 
-      // Evolution returns base64 or code in the response immediately or we might need to poll
-      // Usually connect returns { base64: "..." } or similar
+      // ADICIONE ESTE LOG NO SEU FRONTEND LOCAL PARA DEBUGAR:
+      console.log('Resposta do Backend:', data);
 
       const parsed = parseAuthArtifact(data);
       if (parsed.type === 'img') setArtifact(parsed);
