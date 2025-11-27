@@ -1,35 +1,44 @@
-// src/components/Integrations/WhatsAppIntegration.jsx
+// src/components/WhatsApp/WhatsAppIntegration.jsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { QrCode, Smartphone, Loader2, WifiOff, Plus, Trash2, CheckCircle2, XCircle } from 'lucide-react';
+import { QrCode, Smartphone, Loader2, WifiOff, Plus, Trash2, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { EvolutionService } from '@/lib/whatsapp';
 import { useAuth } from '@/contexts/AuthContext';
-import QRCode from 'qrcode';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
-/* ---------- helpers ---------- */
-function parseAuthArtifact(j) {
-  // Evolution v2: { qrcode: { base64: "..." } }
-  let s = j?.qrcode?.base64 || j?.base64 || j?.qrcode || j?.qr || j?.dataURL || null;
+/* ---------- HELPERS INTELIGENTES ---------- */
+function parseAuthArtifact(data) {
+  if (!data) return { type: 'none', value: null };
 
-  // Se s for objeto (ex: { instanceId: ... }), tenta pegar base64 dentro dele
-  if (typeof s === 'object' && s !== null) {
-    s = s.base64 || s.qr || null;
+  // Debug para você ver no navegador (F12) o que está chegando
+  console.log("📦 Dados recebidos no Parse:", data);
+
+  // 1. Tenta encontrar a string base64 em vários lugares possíveis do JSON
+  let base64 = 
+    data?.qrcode?.base64 || 
+    data?.base64 || 
+    data?.qrcode || 
+    data?.qr || 
+    (typeof data === 'string' && data.length > 100 ? data : null);
+
+  // Se achou algo que parece uma imagem
+  if (base64 && typeof base64 === 'string') {
+    // Remove prefixo se já vier duplicado
+    base64 = base64.replace('data:image/png;base64,', '');
+    
+    // Se for uma string muito curta, provavelmente não é imagem (é um erro ou status)
+    if (base64.length < 50) return { type: 'none', value: null };
+
+    return { type: 'img', value: `data:image/png;base64,${base64}` };
   }
 
-  if (s && typeof s === 'string') {
-    if (s.startsWith('data:image')) return { type: 'img', value: s };
-    // Se for base64 puro, adiciona prefixo
-    if (/^[A-Za-z0-9+/=]+$/.test(s)) return { type: 'img', value: `data:image/png;base64,${s}` };
-    return { type: 'text', value: s };
-  }
-
-  const code = j?.pairingCode || j?.code || j?.qrcode?.pairingCode;
+  // 2. Tenta encontrar códigos de pareamento (Pairing Code)
+  const code = data?.pairingCode || data?.code || data?.qrcode?.pairingCode;
   if (code) return { type: 'code', value: String(code) };
 
   return { type: 'none', value: null };
@@ -37,25 +46,23 @@ function parseAuthArtifact(j) {
 
 function normalizeStatus(resp) {
   try {
-    // Evolution API v2 returns { instance: { state: 'open' } } or just { state: 'open' }
     const s = typeof resp === 'string' ? resp : resp?.instance?.state || resp?.state || resp?.status || 'unknown';
     const t = String(s || '').toLowerCase();
 
-    if (t === 'open' || t === 'connected' || t === 'online' || t === 'ready') return 'connected';
-    if (t === 'close' || t === 'disconnected' || t === 'offline' || t === 'logout') return 'disconnected';
-    if (t === 'connecting' || t === 'qr' || t === 'scan') return 'qr';
+    if (['open', 'connected', 'online', 'ready'].includes(t)) return 'connected';
+    if (['close', 'disconnected', 'offline', 'logout'].includes(t)) return 'disconnected';
+    if (['connecting', 'qr', 'scan'].includes(t)) return 'qr';
 
     return 'unknown';
   } catch { return 'unknown'; }
 }
 
-/* ---------- card de instância ---------- */
+/* ---------- COMPONENTE DO CARD ---------- */
 function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
   const { toast } = useToast();
   const [isConnecting, setIsConnecting] = useState(false);
   const [artifact, setArtifact] = useState({ type: 'none', value: null });
   const [status, setStatus] = useState(instance.status || 'disconnected');
-  const [phoneNumber, setPhoneNumber] = useState(''); // Novo estado para número de telefone
   const pollRef = useRef(null);
 
   const stopPolling = () => {
@@ -68,63 +75,55 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
   const checkConnectionStatus = useCallback(async () => {
     try {
       const data = await EvolutionService.getConnectionState(instance.instance_name);
-      const current = normalizeStatus(data?.instance?.state || data?.state);
+      const current = normalizeStatus(data);
       setStatus(current);
-
-      // Se estiver em QR, tenta atualizar o artefato (QR Code) caso venha na resposta de status ou se precisarmos buscar novamente
-      if (current === 'qr') {
-        const parsed = parseAuthArtifact(data);
-        if (parsed.type !== 'none') {
-          setArtifact(parsed);
-        } else if (artifact.type === 'none') {
-          // Se o status é QR mas não temos o QR, tentamos chamar o connect novamente para pegar o QR do cache do backend
-          // Isso força o backend a retornar o QR cacheado na resposta do connect/status
-          try {
-            const retryData = await EvolutionService.connectInstance(instance.instance_name);
-            const retryParsed = parseAuthArtifact(retryData);
-            if (retryParsed.type !== 'none') setArtifact(retryParsed);
-          } catch (ignore) { }
-        }
-      }
 
       if (current === 'connected') {
         stopPolling();
         setIsConnecting(false);
         setArtifact({ type: 'none', value: null });
-        localStorage.setItem('instance_name', instance.instance_name);
-        toast({ title: 'WhatsApp Conectado', description: `Conta "${instance.display_name}" conectada!` });
+        toast({ title: 'Conectado!', description: `A conta "${instance.display_name}" está online.`, className: "bg-green-600 text-white border-none" });
         onAfterStatusChange?.('connected');
       }
     } catch (error) {
-      console.error("Erro ao checar status:", error);
+      console.error("Status Check Error:", error);
     }
   }, [instance, onAfterStatusChange, toast]);
 
   const handleConnect = async () => {
     setIsConnecting(true);
-    setArtifact({ type: 'none', value: null });
-    setStatus('qr');
+    setArtifact({ type: 'none', value: null }); // Limpa anterior
+    setStatus('qr'); // Assume estado visual de QR
+    
     try {
-      // Se o usuário preencheu o número, passamos para o backend gerar o Pairing Code
-      const payload = phoneNumber ? { number: phoneNumber } : {};
-      const data = await EvolutionService.connectInstance(instance.instance_name, payload);
+      // Chama o backend (que agora tem a lógica de auto-correção)
+      const responseData = await EvolutionService.connectInstance(instance.instance_name);
+      
+      console.log("📡 Resposta do Backend:", responseData); // OLHE ISTO NO CONSOLE DO NAVEGADOR
 
-      // ADICIONE ESTE LOG NO SEU FRONTEND LOCAL PARA DEBUGAR:
-      console.log('Resposta do Backend:', data);
-
-      const parsed = parseAuthArtifact(data);
-      if (parsed.type === 'img') setArtifact(parsed);
-      else if (parsed.type === 'code') setArtifact(parsed);
-      else {
-        // If no QR returned immediately, it might be in 'connecting' state, start polling
+      const parsed = parseAuthArtifact(responseData);
+      
+      if (parsed.type !== 'none') {
+        setArtifact(parsed);
+        // Inicia polling para saber quando o user escaneou
+        stopPolling();
+        pollRef.current = setInterval(checkConnectionStatus, 3000);
+      } else {
+        // Se não veio QR, pode ser que já esteja conectado ou erro
+        const currentStatus = normalizeStatus(responseData);
+        if (currentStatus === 'connected') {
+            setStatus('connected');
+            setIsConnecting(false);
+            toast({ title: 'Já conectado!', description: 'Esta instância já está pronta.' });
+        } else {
+            // Mantém em connecting para tentar de novo manual ou mostra erro
+            toast({ title: 'Aguardando...', description: 'QR Code solicitado. Se não aparecer em 5s, tente novamente.' });
+        }
       }
-
-      stopPolling();
-      pollRef.current = setInterval(checkConnectionStatus, 3000);
     } catch (error) {
       setIsConnecting(false);
-      const errorMessage = error.response?.data?.message || 'Não foi possível obter QR/código.';
-      toast({ title: 'Erro ao iniciar conexão', description: errorMessage, variant: 'destructive' });
+      const msg = error.response?.data?.details || error.message || 'Erro desconhecido';
+      toast({ title: 'Erro ao conectar', description: msg, variant: 'destructive' });
     }
   };
 
@@ -135,74 +134,104 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
     try {
       await EvolutionService.logoutInstance(instance.instance_name);
       setStatus('disconnected');
-      toast({ title: 'WhatsApp Desconectado', description: `Conta "${instance.display_name}" foi desconectada.` });
+      toast({ title: 'Desconectado', description: 'Sessão finalizada.' });
       onAfterStatusChange?.('disconnected');
     } catch (error) {
-      const errorMessage = error.response?.data?.message || 'Não foi possível finalizar a sessão.';
-      toast({ title: 'Erro ao desconectar', description: errorMessage, variant: 'destructive' });
+      toast({ title: 'Erro ao desconectar', description: 'Tente novamente.', variant: 'destructive' });
     }
   };
 
-  useEffect(() => () => stopPolling(), []);
+  useEffect(() => {
+    // Limpa polling ao desmontar
+    return () => stopPolling();
+  }, []);
 
   return (
-    <Card className="glass-effect border-white/10">
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-lg text-white">{instance.display_name}</CardTitle>
-        <Badge variant={status === 'connected' ? 'success' : 'secondary'} className="capitalize">
-          {status === 'qr' ? 'Aguardando Scan' : status.replace('_', ' ')}
+    <Card className="glass-effect border-white/10 overflow-hidden relative group">
+      <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+      
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-lg text-white font-medium truncate max-w-[200px]" title={instance.display_name}>
+          {instance.display_name}
+        </CardTitle>
+        <Badge variant={status === 'connected' ? 'success' : 'secondary'} className={`capitalize border-0 ${status === 'connected' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-gray-400'}`}>
+          {status === 'qr' ? 'Escaneie' : status.replace('_', ' ')}
         </Badge>
       </CardHeader>
-      <CardContent className="flex flex-col items-center justify-center min-h-[220px] space-y-4">
-        {isConnecting && artifact.type === 'img' && (
-          <>
-            <div className="w-40 h-40 bg-white p-2 rounded-lg"><img src={artifact.value} alt="QR Code" /></div>
-            <p className="text-sm text-gray-300">Escaneie o QR no WhatsApp.</p>
-          </>
-        )}
-        {isConnecting && artifact.type === 'code' && (
-          <div className="flex flex-col items-center gap-2">
-            <div className="text-white text-3xl font-mono tracking-widest bg-black/40 px-4 py-2 rounded-lg">{artifact.value}</div>
-            <p className="text-sm text-gray-300 text-center">Abra o WhatsApp &gt; Menu &gt; Aparelhos conectados &gt; Conectar com código e digite esse número.</p>
-          </div>
-        )}
-        {!isConnecting && status !== 'connected' && (
-          <div className="flex flex-col items-center gap-2"><WifiOff className="text-gray-400" /><p className="text-sm text-gray-400">Conta desconectada</p></div>
-        )}
+
+      <CardContent className="flex flex-col items-center justify-center min-h-[240px] space-y-6 relative z-10">
+        
+        {/* ESTADO: CONECTADO */}
         {status === 'connected' && (
-          <div className="flex items-center gap-2 text-emerald-400"><CheckCircle2 /> <span>Conectado</span></div>
-        )}
-        <div className="flex gap-2 w-full max-w-sm flex-col">
-          {status !== 'connected' && (
-            <div className="flex flex-col gap-2 mb-2">
-              <label className="text-xs text-gray-400 ml-1">Número para Pareamento (Opcional)</label>
-              <Input
-                placeholder="Ex: 5511999999999"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value)}
-                className="bg-white/5 border-white/10 text-white"
-              />
-              <p className="text-[10px] text-gray-500 ml-1">Preencha apenas se quiser usar Código de Pareamento em vez de QR Code.</p>
+          <div className="flex flex-col items-center animate-in fade-in zoom-in duration-500">
+            <div className="w-20 h-20 rounded-full bg-emerald-500/10 flex items-center justify-center mb-4 shadow-[0_0_30px_-5px_rgba(16,185,129,0.3)]">
+              <Smartphone className="h-10 w-10 text-emerald-400" />
             </div>
-          )}
-          <div className="flex gap-2 justify-center">
-            {status !== 'connected' ? (
-              <Button onClick={handleConnect} className="bg-gradient-to-r from-green-500 to-emerald-500 w-full">
-                <QrCode className="mr-2 h-4 w-4" />
-                {phoneNumber ? 'Gerar Código' : 'Gerar QR Code'}
-              </Button>
-            ) : (
-              <Button onClick={handleDisconnect} variant="destructive" className="w-full"><XCircle className="mr-2 h-4 w-4" />Desconectar</Button>
-            )}
-            <Button onClick={checkConnectionStatus} variant="secondary" className="bg-white/10 hover:bg-white/20">{status === 'connected' ? 'Re-checar' : 'Ver status'}</Button>
+            <p className="text-emerald-400 font-medium flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" /> WhatsApp Ativo
+            </p>
           </div>
+        )}
+
+        {/* ESTADO: MOSTRANDO QR CODE */}
+        {isConnecting && artifact.type === 'img' && status !== 'connected' && (
+           <div className="flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-500">
+             <div className="bg-white p-3 rounded-xl shadow-xl shadow-black/50 mb-3">
+               <img src={artifact.value} alt="QR Code" className="w-48 h-48 object-contain" />
+             </div>
+             <p className="text-xs text-gray-400 animate-pulse">Abra o WhatsApp e escaneie</p>
+           </div>
+        )}
+
+        {/* ESTADO: CARREGANDO QR (Spinner) */}
+        {isConnecting && artifact.type === 'none' && status !== 'connected' && (
+          <div className="flex flex-col items-center text-center space-y-4">
+            <Loader2 className="h-12 w-12 text-indigo-400 animate-spin" />
+            <div className="space-y-1">
+              <p className="text-white font-medium">Gerando QR Code...</p>
+              <p className="text-sm text-gray-500">Isso pode levar alguns segundos</p>
+            </div>
+          </div>
+        )}
+
+        {/* ESTADO: DESCONECTADO (Inicial) */}
+        {!isConnecting && status !== 'connected' && (
+          <div className="flex flex-col items-center gap-3 text-gray-500">
+            <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center">
+              <WifiOff className="w-8 h-8 opacity-50" />
+            </div>
+            <p className="text-sm">Conta desconectada</p>
+          </div>
+        )}
+
+        {/* BOTÕES DE AÇÃO */}
+        <div className="flex gap-3 w-full pt-2">
+          {status !== 'connected' ? (
+            <Button 
+              onClick={handleConnect} 
+              disabled={isConnecting}
+              className="flex-1 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 border-0 text-white shadow-lg shadow-indigo-900/20 transition-all hover:scale-[1.02]"
+            >
+              {isConnecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <QrCode className="w-4 h-4 mr-2" />}
+              {isConnecting ? 'Gerando...' : 'Conectar'}
+            </Button>
+          ) : (
+            <Button onClick={handleDisconnect} variant="destructive" className="flex-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20">
+              <XCircle className="mr-2 h-4 w-4" /> Desconectar
+            </Button>
+          )}
+          
+          <Button onClick={checkConnectionStatus} variant="outline" size="icon" className="border-white/10 bg-white/5 hover:bg-white/10 text-white" title="Atualizar Status">
+             <RefreshCw className={`h-4 w-4 ${status === 'qr' ? 'animate-spin' : ''}`} />
+          </Button>
         </div>
+
       </CardContent>
     </Card>
   );
 }
 
-/* ---------- lista + criação ---------- */
+/* ---------- PÁGINA PRINCIPAL ---------- */
 function WhatsAppIntegration() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -212,7 +241,6 @@ function WhatsAppIntegration() {
   const [newInstanceName, setNewInstanceName] = useState('');
 
   const fetchInstances = useCallback(async () => {
-    // if (!user) { setLoading(false); return; } // Allow fetching even if user context is partial, or rely on auth
     setLoading(true);
     try {
       const data = await EvolutionService.fetchInstances();
@@ -221,7 +249,7 @@ function WhatsAppIntegration() {
       console.error("Erro ao buscar instâncias:", error);
     }
     setLoading(false);
-  }, [user]);
+  }, []);
 
   useEffect(() => { fetchInstances(); }, [fetchInstances]);
 
@@ -231,60 +259,91 @@ function WhatsAppIntegration() {
       return;
     }
     try {
-      // Evolution create instance
       await EvolutionService.createInstance(newInstanceName);
-      // Refresh list
       await fetchInstances();
       setNewInstanceName('');
       setIsDialogOpen(false);
-      toast({ title: 'Conta adicionada com sucesso!' });
+      toast({ title: 'Sucesso!', description: 'Nova conta preparada.' });
     } catch (error) {
-      const errorMessage = error.response?.data?.message || 'Não foi possível adicionar a conta.';
-      toast({ title: 'Erro ao adicionar conta', description: errorMessage, variant: 'destructive' });
+      toast({ title: 'Erro', description: 'Não foi possível criar a conta.', variant: 'destructive' });
     }
   };
 
   const handleDeleteInstance = async (id) => {
+    if(!confirm("Tem certeza que deseja remover esta conta do painel?")) return;
     try {
       await EvolutionService.deleteInstance(id);
       setInstances(instances.filter((i) => i.id !== id));
       toast({ title: 'Conta removida' });
     } catch (error) {
-      const errorMessage = error.response?.data?.message || 'Não foi possível remover a conta.';
-      toast({ title: 'Erro ao remover', description: errorMessage, variant: 'destructive' });
+      toast({ title: 'Erro', description: 'Erro ao remover conta.', variant: 'destructive' });
     }
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Smartphone className="text-emerald-400" />
-          <h2 className="text-xl font-semibold text-white">Integração WhatsApp</h2>
+    <div className="space-y-6 p-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+            <Smartphone className="text-emerald-400 h-6 w-6" /> Integração WhatsApp
+          </h2>
+          <p className="text-gray-400 text-sm mt-1">Gerencie suas conexões e escaneie os QR Codes para iniciar.</p>
         </div>
-        <Button onClick={() => setIsDialogOpen(true)} className="bg-gradient-to-r from-indigo-500 to-purple-500"><Plus className="mr-2 h-4 w-4" /> Nova Conta</Button>
+        <Button onClick={() => setIsDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white border-none shadow-lg shadow-emerald-900/20">
+          <Plus className="mr-2 h-4 w-4" /> Nova Conexão
+        </Button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {loading && <Card className="glass-effect border-white/10"><CardContent className="flex items-center justify-center h-40 text-white/70"><Loader2 className="animate-spin mr-2" /> Carregando...</CardContent></Card>}
-        {!loading && instances.length === 0 && <Card className="glass-effect border-white/10"><CardContent className="flex items-center justify-center h-40 text-white/70">Nenhuma conta adicionada ainda.</CardContent></Card>}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {loading && (
+            [1,2,3].map(i => (
+                <Card key={i} className="h-[300px] glass-effect border-white/5 animate-pulse bg-white/5"></Card>
+            ))
+        )}
+        
+        {!loading && instances.length === 0 && (
+            <Card className="col-span-full h-40 flex flex-col items-center justify-center glass-effect border-white/10 border-dashed">
+                <p className="text-gray-400">Nenhuma conta conectada ainda.</p>
+                <Button variant="link" onClick={() => setIsDialogOpen(true)} className="text-emerald-400">Criar a primeira</Button>
+            </Card>
+        )}
+
         {!loading && instances.map((instance) => (
-          <motion.div key={instance.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="relative">
-            <div className="absolute right-2 top-2 z-10">
-              <Button size="icon" variant="destructive" className="h-8 w-8" onClick={() => handleDeleteInstance(instance.id)}><Trash2 className="h-4 w-4" /></Button>
+          <motion.div key={instance.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
+            <div className="relative">
+              <Button 
+                size="icon" 
+                variant="ghost" 
+                className="absolute right-2 top-2 z-20 h-8 w-8 text-gray-500 hover:text-red-400 hover:bg-red-500/10" 
+                onClick={() => handleDeleteInstance(instance.id)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+              <WhatsAppInstanceCard instance={instance} onAfterStatusChange={() => fetchInstances()} />
             </div>
-            <WhatsAppInstanceCard instance={instance} onAfterStatusChange={() => fetchInstances()} />
           </motion.div>
         ))}
       </div>
+
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="bg-[#111827]/90 backdrop-blur-md border-white/10">
-          <DialogHeader><DialogTitle className="text-white">Criar nova conta</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <Input placeholder="Ex: Minha Loja" value={newInstanceName} onChange={(e) => setNewInstanceName(e.target.value)} className="bg-white/5 text-white placeholder:text-white/50" />
+        <DialogContent className="bg-[#0f172a] border-white/10 text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nova Conexão</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+                <label className="text-sm text-gray-400">Nome da conta (Ex: Vendas, Suporte)</label>
+                <Input 
+                    placeholder="Digite um nome para identificar..." 
+                    value={newInstanceName} 
+                    onChange={(e) => setNewInstanceName(e.target.value)} 
+                    className="bg-white/5 border-white/10 text-white focus:border-emerald-500" 
+                />
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setIsDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleAddInstance} className="bg-gradient-to-r from-green-500 to-emerald-500">Salvar</Button>
+            <Button variant="ghost" onClick={() => setIsDialogOpen(false)} className="hover:bg-white/5 hover:text-white">Cancelar</Button>
+            <Button onClick={handleAddInstance} className="bg-emerald-600 hover:bg-emerald-500 text-white">Criar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

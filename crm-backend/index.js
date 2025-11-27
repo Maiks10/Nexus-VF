@@ -526,7 +526,7 @@ const createEvolutionAPI = () => axios.create({
     headers: { 'apikey': process.env.EVOLUTION_API_KEY }
 });
 
-// --- ROTA WHATSAPP SESSION SIMPLIFICADA ---
+// --- ROTA WHATSAPP SESSION (CORREÇÃO DO QR CODE) ---
 app.post('/api/whatsapp/session', verifyToken, async (req, res) => {
     const { action, instanceName } = req.body;
     const evolutionAPI = createEvolutionAPI();
@@ -535,7 +535,7 @@ app.post('/api/whatsapp/session', verifyToken, async (req, res) => {
 
     try {
         if (action === 'generate_qr') {
-            // 1. TENTA CRIAR (Se falhar porque existe, ignoramos e seguimos)
+            // 1. TENTA CRIAR (Se já existe, ignoramos o erro)
             try {
                 await evolutionAPI.post(`/instance/create`, {
                     instanceName,
@@ -550,26 +550,29 @@ app.post('/api/whatsapp/session', verifyToken, async (req, res) => {
                         events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
                     }
                 });
-                console.log(`[Backend] Instância ${instanceName} criada.`);
+                console.log(`[Backend] Instância criada/configurada.`);
             } catch (e) {
-                // Se o erro for "Forbidden" ou "already in use", é bom sinal: a instância já existe!
-                console.log(`[Backend] Aviso: Instância já existia, prosseguindo para buscar QR.`);
+                // Erro 403 é normal se já existe
+                if (e.response?.status !== 403) console.log(`[Backend] Aviso criação: ${e.message}`);
             }
 
-            // 2. PEDE O QR CODE (Esta é a chave para parar o loop)
-            // O endpoint /instance/connect devolve o QR Code mesmo se a instância já existir
+            // 2. ACIONA A GERAÇÃO DO QR CODE
             try {
-                console.log(`[Backend] Buscando QR Code no /connect...`);
-                const connectRes = await evolutionAPI.get(`/instance/connect/${instanceName}`);
+                await evolutionAPI.get(`/instance/connect/${instanceName}`);
+            } catch (e) { console.log('[Backend] Aviso: Connect trigger falhou, mas prosseguindo...'); }
 
-                // Retornamos exatamente o que a Evolution manda. O Frontend que se vire para achar o "qrcode.base64" ou "base64".
-                console.log('[Backend] QR Code encontrado e enviado.');
-                res.json(connectRes.data);
-            } catch (connectError) {
-                console.error('[Backend] Falha ao buscar QR:', connectError.message);
-                // Se falhar aqui, retornamos um erro JSON para o frontend parar de tentar
-                res.status(500).json({ error: 'Não foi possível obter o QR Code da Evolution.' });
-            }
+            // 3. AGUARDA E BUSCA O QR CODE NO ESTADO (AQUI ESTÁ O SEGREDO)
+            // A Evolution demora uns milissegundos para gerar o base64
+            await new Promise(r => setTimeout(r, 1500));
+
+            console.log(`[Backend] Buscando QR Code real no connectionState...`);
+            const stateRes = await evolutionAPI.get(`/instance/connectionState/${instanceName}`);
+
+            // Log para verificarmos se o base64 veio
+            const temQR = stateRes.data?.qrcode?.base64 || stateRes.data?.base64 ? 'SIM' : 'NÃO';
+            console.log(`[Backend] Resposta obtida. Tem QR Code? ${temQR}`);
+
+            res.json(stateRes.data);
 
         } else if (action === 'status') {
             const r = await evolutionAPI.get(`/instance/connectionState/${instanceName}`);
