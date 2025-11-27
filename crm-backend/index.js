@@ -603,53 +603,181 @@ app.post('/api/whatsapp/instances/:id/sync-status', verifyToken, async (req, res
 
 app.post('/api/whatsapp/session', verifyToken, async (req, res) => {
     const { action, instanceName } = req.body;
-    const evolutionAPI = createEvolutionAPI();
+    const evolutionAPI = axios.create({
+        baseURL: process.env.EVOLUTION_API_URL,
+        headers: {
+            'apikey': process.env.EVOLUTION_API_KEY,
+            'Content-Type': 'application/json'
+        },
+        timeout: 60000 // Aumentado para 60 segundos devido à lentidão da rede
+    });
     try {
         let response;
         switch (action) {
             case 'generate_qr':
                 try {
-                    await evolutionAPI.post(`/instance/create`, {
+                    // WORKAROUND: Deleta a instância antes de criar para evitar o loop infinito
+                    // Referência: https://github.com/EvolutionAPI/evolution-api/issues
+                    try {
+                        await evolutionAPI.delete(`/instance/delete/${instanceName}`);
+                        console.log(`Instância ${instanceName} deletada (cleanup antes de criar)`);
+                        // Aguarda 2 segundos para garantir que a instância foi removida
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    } catch (deleteError) {
+                        // Ignora erro se a instância não existir
+                        console.log(`Instância ${instanceName} não existia ou já foi deletada`);
+                    }
+
+                    const createResponse = await evolutionAPI.post(`/instance/create`, {
                         instanceName,
                         token: "",
                         qrcode: true,
                         integration: "WHATSAPP-BAILEYS",
                         webhook: {
-                            url: process.env.WEBHOOK_URL || "http://localhost:3001/api/webhooks/evolution",
+                            url: process.env.WEBHOOK_URL || "http://172.17.0.1:3001/api/webhooks/evolution",
                             byEvents: false,
-                            base64: false,
+                            base64: true,
                             headers: {
                                 "x-webhook-secret": process.env.EVOLUTION_WEBHOOK_SECRET
                             },
-                            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
+                            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"]
                         }
                     });
+
+                    // Se a criação retornar o QR Code, usamos ele diretamente
+                    if (createResponse.data && (createResponse.data.qrcode?.base64 || createResponse.data.base64)) {
+                        response = createResponse;
+                        console.log('QR Code obtido na criação da instância.');
+                    } else {
+                        console.log('QR Code não veio na criação. Verificando estratégia de conexão...');
+
+                        // ESTRATÉGIA HÍBRIDA: QR Code (Polling) ou Pairing Code
+
+                        // Se veio um número de telefone no request, tentamos Pairing Code
+                        if (req.body.number) {
+                            console.log(`Tentando gerar Pairing Code para o número: ${req.body.number}`);
+                            try {
+                                // Pequeno delay para garantir que a instância subiu
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                                const pairingResponse = await evolutionAPI.get(`/instance/connect/${instanceName}?number=${req.body.number}`);
+                                if (pairingResponse.data && pairingResponse.data.pairingCode) {
+                                    console.log('Pairing Code gerado com sucesso:', pairingResponse.data.pairingCode);
+                                    response = {
+                                        data: {
+                                            pairingCode: pairingResponse.data.pairingCode,
+                                            code: pairingResponse.data.code,
+                                            count: pairingResponse.data.count
+                                        }
+                                    };
+                                } else {
+                                    console.log('Falha ao gerar Pairing Code:', pairingResponse.data);
+                                    throw new Error('Pairing Code não retornado pela API');
+                                }
+                            } catch (pairingError) {
+                                console.error('Erro ao solicitar Pairing Code:', pairingError.message);
+                                // Não falha aqui, deixa cair no polling de QR como fallback (embora improvável funcionar se for v2.3)
+                            }
+                        }
+
+                        // Se não conseguiu Pairing Code (ou não tinha número), tenta Polling de QR Code
+                        if (!response || !response.data?.pairingCode) {
+                            console.log('Iniciando polling ativo para QR Code...');
+                            let attempts = 0;
+                            const maxAttempts = 15; // 15 segundos (15 x 1s)
+
+                            while (attempts < maxAttempts) {
+                                try {
+                                    // Primeiro: verifica o cache do webhook (se chegou)
+                                    if (qrCodeCache[instanceName]) {
+                                        console.log(`[Tentativa ${attempts + 1}] QR Code encontrado no cache webhook!`);
+                                        response = {
+                                            data: {
+                                                qrcode: {
+                                                    base64: qrCodeCache[instanceName]
+                                                }
+                                            }
+                                        };
+                                        break;
+                                    }
+
+                                    // Segundo: tenta buscar diretamente do endpoint de estado
+                                    const stateResponse = await evolutionAPI.get(`/instance/connectionState/${instanceName}`);
+                                    if (stateResponse.data?.qrcode?.code || stateResponse.data?.qr || stateResponse.data?.base64) {
+                                        console.log(`[Tentativa ${attempts + 1}] QR Code encontrado via connectionState!`);
+                                        response = { data: { qrcode: { base64: stateResponse.data.qrcode?.code || stateResponse.data.qr || stateResponse.data.base64 } } };
+                                        break;
+                                    }
+
+                                    console.log(`[Tentativa ${attempts + 1}/${maxAttempts}] QR Code ainda não disponível. Aguardando...`);
+                                } catch (pollError) {
+                                    console.log(`[Tentativa ${attempts + 1}] Erro ao buscar QR: ${pollError.message}`);
+                                }
+
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                attempts++;
+                            }
+
+                            // Fallback final: tenta /instance/connect (apenas se não for pairing code)
+                            if (!response || (!response.data?.qrcode?.base64 && !response.data?.pairingCode)) {
+                                console.log('Fallback final: chamando /instance/connect...');
+                                try {
+                                    const fallbackResponse = await evolutionAPI.get(`/instance/connect/${instanceName}`);
+                                    // Se o fallback retornar pairing code (algumas versões retornam aqui)
+                                    if (fallbackResponse.data?.pairingCode) {
+                                        response = fallbackResponse;
+                                    } else {
+                                        response = fallbackResponse;
+                                    }
+                                }
+                                catch (fallbackError) {
+                                    console.log('Fallback /connect também falhou:', fallbackError.message);
+                                }
+                            }
+                        }
+                    }
                 } catch (error) {
                     if (error.response?.data?.error === 'Forbidden' || error.response?.data?.response?.message?.[0]?.includes('already in use')) {
                         console.log(`Instância ${instanceName} já existe. Atualizando webhook...`);
                         await evolutionAPI.post(`/webhook/set/${instanceName}`, {
                             webhook: {
-                                url: process.env.WEBHOOK_URL || "http://localhost:3001/api/webhooks/evolution",
+                                url: process.env.WEBHOOK_URL || "http://172.17.0.1:3001/api/webhooks/evolution",
                                 enabled: true,
                                 byEvents: false,
-                                base64: false,
+                                base64: true,
                                 headers: {
                                     "x-webhook-secret": process.env.EVOLUTION_WEBHOOK_SECRET
                                 },
-                                events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
+                                events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"]
                             }
                         });
+
+                        // Se já existe, verifica cache ou tenta conectar
+                        if (qrCodeCache[instanceName]) {
+                            response = { data: { qrcode: { base64: qrCodeCache[instanceName] } } };
+                        } else {
+                            response = await evolutionAPI.get(`/instance/connect/${instanceName}`);
+                        }
                     } else {
                         throw error;
                     }
                 }
-                response = await evolutionAPI.get(`/instance/connect/${instanceName}`);
+
                 console.log('--- DEBUG QR CODE GENERATION ---');
                 console.log('Instance:', instanceName);
-                console.log('Connect Response Data:', JSON.stringify(response.data, null, 2));
+                if (response?.data) {
+                    // console.log('Response Data:', JSON.stringify(response.data, null, 2));
+                }
                 break;
             case 'status':
                 response = await evolutionAPI.get(`/instance/connectionState/${instanceName}`);
+                // Se tivermos QR code em cache e o status for connecting/qr, injetamos na resposta
+                if (qrCodeCache[instanceName] && (!response.data?.instance?.state || response.data.instance.state === 'connecting' || response.data.instance.state === 'qr')) {
+                    if (!response.data) response.data = {};
+                    if (!response.data.instance) response.data.instance = {};
+                    // Injeta como qrcode.base64 para o frontend pegar
+                    response.data.qrcode = { base64: qrCodeCache[instanceName] };
+                }
                 break;
             case 'logout':
                 response = await evolutionAPI.delete(`/instance/logout/${instanceName}`);
@@ -760,6 +888,9 @@ function pickText(m) {
     }
 }
 
+// Cache simples em memória para QRs
+const qrCodeCache = {};
+
 app.post('/api/webhooks/evolution', async (req, res) => {
     const webhookData = req.body;
     const instance = webhookData?.instance;
@@ -771,11 +902,24 @@ app.post('/api/webhooks/evolution', async (req, res) => {
     }
 
     console.log(`--- WEBHOOK RECEBIDO (${webhookData.event}) PARA INSTÂNCIA: ${instance} ---`);
-    console.log('DADOS COMPLETOS:', JSON.stringify(webhookData, null, 2));
+    // console.log('DADOS COMPLETOS:', JSON.stringify(webhookData, null, 2)); // Comentado para reduzir log
+
+    if (webhookData.event === 'qrcode.updated') {
+        const { qrcode } = webhookData.data;
+        if (qrcode && qrcode.base64) {
+            qrCodeCache[instance] = qrcode.base64;
+            console.log(`QR Code recebido e cacheado para instância ${instance}`);
+        }
+    }
 
     if (webhookData.event === 'connection.update') {
         const { state } = webhookData.data;
         const status = state === 'open' ? 'connected' : (state === 'close' ? 'disconnected' : 'qr');
+
+        // Limpa cache se conectar ou desconectar
+        if (status === 'connected' || status === 'disconnected') {
+            delete qrCodeCache[instance];
+        }
 
         const dbClient = await pool.connect();
         try {

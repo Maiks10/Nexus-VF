@@ -18,11 +18,12 @@ export const EvolutionService = {
     return response.data;
   },
 
-  async connectInstance(instanceName) {
+  async connectInstance(instanceName, payload = {}) {
     // Backend route for session actions
     const response = await api.post('/whatsapp/session', {
       action: 'generate_qr',
-      instanceName
+      instanceName,
+      ...payload // Passa number ou outros parâmetros
     });
     return response.data;
   },

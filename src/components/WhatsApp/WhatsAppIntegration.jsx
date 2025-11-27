@@ -55,6 +55,7 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [artifact, setArtifact] = useState({ type: 'none', value: null });
   const [status, setStatus] = useState(instance.status || 'disconnected');
+  const [phoneNumber, setPhoneNumber] = useState(''); // Novo estado para número de telefone
   const pollRef = useRef(null);
 
   const stopPolling = () => {
@@ -69,6 +70,22 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
       const data = await EvolutionService.getConnectionState(instance.instance_name);
       const current = normalizeStatus(data?.instance?.state || data?.state);
       setStatus(current);
+
+      // Se estiver em QR, tenta atualizar o artefato (QR Code) caso venha na resposta de status ou se precisarmos buscar novamente
+      if (current === 'qr') {
+        const parsed = parseAuthArtifact(data);
+        if (parsed.type !== 'none') {
+          setArtifact(parsed);
+        } else if (artifact.type === 'none') {
+          // Se o status é QR mas não temos o QR, tentamos chamar o connect novamente para pegar o QR do cache do backend
+          // Isso força o backend a retornar o QR cacheado na resposta do connect/status
+          try {
+            const retryData = await EvolutionService.connectInstance(instance.instance_name);
+            const retryParsed = parseAuthArtifact(retryData);
+            if (retryParsed.type !== 'none') setArtifact(retryParsed);
+          } catch (ignore) { }
+        }
+      }
 
       if (current === 'connected') {
         stopPolling();
@@ -88,7 +105,9 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
     setArtifact({ type: 'none', value: null });
     setStatus('qr');
     try {
-      const data = await EvolutionService.connectInstance(instance.instance_name);
+      // Se o usuário preencheu o número, passamos para o backend gerar o Pairing Code
+      const payload = phoneNumber ? { number: phoneNumber } : {};
+      const data = await EvolutionService.connectInstance(instance.instance_name, payload);
 
       // Evolution returns base64 or code in the response immediately or we might need to poll
       // Usually connect returns { base64: "..." } or similar
@@ -153,13 +172,30 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
         {status === 'connected' && (
           <div className="flex items-center gap-2 text-emerald-400"><CheckCircle2 /> <span>Conectado</span></div>
         )}
-        <div className="flex gap-2">
-          {status !== 'connected' ? (
-            <Button onClick={handleConnect} className="bg-gradient-to-r from-green-500 to-emerald-500"><QrCode className="mr-2 h-4 w-4" />Conectar (QR / Código)</Button>
-          ) : (
-            <Button onClick={handleDisconnect} variant="destructive"><XCircle className="mr-2 h-4 w-4" />Desconectar</Button>
+        <div className="flex gap-2 w-full max-w-sm flex-col">
+          {status !== 'connected' && (
+            <div className="flex flex-col gap-2 mb-2">
+              <label className="text-xs text-gray-400 ml-1">Número para Pareamento (Opcional)</label>
+              <Input
+                placeholder="Ex: 5511999999999"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                className="bg-white/5 border-white/10 text-white"
+              />
+              <p className="text-[10px] text-gray-500 ml-1">Preencha apenas se quiser usar Código de Pareamento em vez de QR Code.</p>
+            </div>
           )}
-          <Button onClick={checkConnectionStatus} variant="secondary" className="bg-white/10 hover:bg-white/20">{status === 'connected' ? 'Re-checar' : 'Ver status'}</Button>
+          <div className="flex gap-2 justify-center">
+            {status !== 'connected' ? (
+              <Button onClick={handleConnect} className="bg-gradient-to-r from-green-500 to-emerald-500 w-full">
+                <QrCode className="mr-2 h-4 w-4" />
+                {phoneNumber ? 'Gerar Código' : 'Gerar QR Code'}
+              </Button>
+            ) : (
+              <Button onClick={handleDisconnect} variant="destructive" className="w-full"><XCircle className="mr-2 h-4 w-4" />Desconectar</Button>
+            )}
+            <Button onClick={checkConnectionStatus} variant="secondary" className="bg-white/10 hover:bg-white/20">{status === 'connected' ? 'Re-checar' : 'Ver status'}</Button>
+          </div>
         </div>
       </CardContent>
     </Card>
