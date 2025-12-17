@@ -13,45 +13,13 @@ import {
   MessageCircle,
   CalendarClock,
   Filter,
-  ArrowUpRight
+  ArrowUpRight,
+  Settings
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import apiClient from '@/lib/customSupabaseClient';
 import { ClientFormDialog } from '@/components/Clients/ClientFormDialog';
-
-// --- CONFIGURAÇÃO DAS COLUNAS ---
-const columnsConfig = {
-  new_lead: {
-    name: 'Novo Lead',
-    description: 'Leads recentes',
-    color: 'from-blue-500/20 to-blue-600/20 border-blue-500/50'
-  },
-  contacted: {
-    name: 'Em Contato',
-    description: 'Conversa iniciada',
-    color: 'from-indigo-500/20 to-indigo-600/20 border-indigo-500/50'
-  },
-  proposal: {
-    name: 'Proposta Enviada',
-    description: 'Aguardando resposta',
-    color: 'from-purple-500/20 to-purple-600/20 border-purple-500/50'
-  },
-  negotiation: {
-    name: 'Em Negociação',
-    description: 'Ajustes finais',
-    color: 'from-orange-500/20 to-orange-600/20 border-orange-500/50'
-  },
-  student: {
-    name: 'Fechado/Aluno',
-    description: 'Venda realizada',
-    color: 'from-green-500/20 to-green-600/20 border-green-500/50'
-  },
-  lost: {
-    name: 'Perdido',
-    description: 'Não converteu',
-    color: 'from-red-500/20 to-red-600/20 border-red-500/50'
-  }
-};
+import { ColumnManagerDialog } from './ColumnManagerDialog';
 
 // --- CONFIGURAÇÃO DE TEMPERATURA ---
 const temperatureColors = {
@@ -87,38 +55,63 @@ const formatDateRelative = (dateString) => {
   return `${Math.floor(diffInSeconds / 86400)}d atrás`;
 };
 
-const initialBoardData = Object.keys(columnsConfig).reduce((acc, key) => {
-  acc[key] = { ...columnsConfig[key], items: [] };
-  return acc;
-}, {});
-
 export function KanbanBoard() {
-  const [boardData, setBoardData] = useState(initialBoardData);
-  const [originalData, setOriginalData] = useState(initialBoardData); // Para filtro
+  const [columns, setColumns] = useState([]);
+  const [boardData, setBoardData] = useState({});
+  const [originalData, setOriginalData] = useState({});
   const [isReady, setIsReady] = useState(false);
   const { toast } = useToast();
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
+  const [isColumnManagerOpen, setIsColumnManagerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDragging, setIsDragging] = useState(false);
+
+  // Carregar colunas do banco
+  const fetchColumns = async () => {
+    try {
+      const response = await apiClient.get('/api/kanban/columns');
+      setColumns(response.data);
+    } catch (error) {
+      console.error(error);
+      toast({ title: 'Erro ao carregar colunas', variant: 'destructive' });
+    }
+  };
 
   const fetchClients = async () => {
     try {
       const response = await apiClient.get('/api/clients');
       const clients = response.data;
 
-      const newBoardData = Object.keys(columnsConfig).reduce((acc, key) => {
-        acc[key] = { ...columnsConfig[key], items: [] };
-        return acc;
-      }, {});
+      // Organizar clients por coluna
+      const newBoardData = {};
+
+      columns.forEach(col => {
+        newBoardData[col.id] = {
+          id: col.id,
+          title: col.title,
+          color: col.color,
+          position: col.position,
+          items: []
+        };
+      });
 
       clients.forEach(client => {
-        // Fallback: se o estágio não existir na config nova, joga para 'new_lead'
-        const stage = columnsConfig[client.kanban_stage] ? client.kanban_stage : 'new_lead';
-        newBoardData[stage].items.push(client);
+        // Encontrar coluna pelo ID ou title (fallback para migração)
+        const targetColumn = columns.find(col =>
+          col.id === client.kanban_column_id ||
+          col.title === client.kanban_stage
+        );
+
+        if (targetColumn && newBoardData[targetColumn.id]) {
+          newBoardData[targetColumn.id].items.push(client);
+        } else if (columns.length > 0) {
+          // Fallback: primeira coluna
+          newBoardData[columns[0].id].items.push(client);
+        }
       });
 
       setBoardData(newBoardData);
-      setOriginalData(newBoardData); // Salva cópia para busca
+      setOriginalData(newBoardData);
     } catch (error) {
       console.error(error);
       toast({ title: 'Erro ao carregar dados', variant: 'destructive' });
@@ -128,8 +121,14 @@ export function KanbanBoard() {
   };
 
   useEffect(() => {
-    fetchClients();
+    fetchColumns();
   }, []);
+
+  useEffect(() => {
+    if (columns.length > 0) {
+      fetchClients();
+    }
+  }, [columns]);
 
   // FILTRO EM TEMPO REAL
   useEffect(() => {
@@ -141,11 +140,11 @@ export function KanbanBoard() {
     const filtered = Object.keys(originalData).reduce((acc, key) => {
       acc[key] = {
         ...originalData[key],
-        items: originalData[key].items.filter(item =>
+        items: originalData[key].items?.filter(item =>
           item.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
           item.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
           item.phone?.includes(searchQuery)
-        )
+        ) || []
       };
       return acc;
     }, {});
@@ -165,8 +164,8 @@ export function KanbanBoard() {
     const startItems = Array.from(startCol.items);
     const [movedItem] = startItems.splice(source.index, 1);
 
-    // Atualiza o item movido com o novo status (para manter consistência visual imediata se algo depender do status no item)
-    const updatedItem = { ...movedItem, kanban_stage: destination.droppableId };
+    // Atualiza o item movido com o novo status
+    const updatedItem = { ...movedItem, kanban_column_id: destination.droppableId };
 
     const newBoard = { ...boardData };
 
@@ -181,22 +180,18 @@ export function KanbanBoard() {
     }
 
     setBoardData(newBoard);
-    // Atualiza também o originalData para que o filtro não "resete" a posição visualmente ao digitar
-    // Simplificação: Recomenda-se refetch ou deep merge, mas aqui vamos assumir sucesso.
 
     try {
       await apiClient.patch(`/api/clients/${draggableId}/stage`, {
-        kanban_stage: destination.droppableId,
-      });
-      toast({
-        title: 'Movido com sucesso!',
-        description: `${updatedItem.name || 'Cliente'} agora está em ${columnsConfig[destination.droppableId].name}`,
-        className: "bg-green-600 border-none text-white"
+        kanban_stage: endCol.title, // Salvar título como fallback
       });
 
-      // Atualizar originalData em background para garantir sincronia
-      // (Poderíamos apenas atualizar o estado local, mas fetch garante integridade)
-      // fetchClients(); 
+      const destColumn = columns.find(c => c.id === destination.droppableId);
+      toast({
+        title: 'Movido com sucesso!',
+        description: `${updatedItem.name || 'Cliente'} agora está em ${destColumn?.title || 'nova coluna'}`,
+        className: "bg-green-600 border-none text-white"
+      });
     } catch (error) {
       console.error(error);
       toast({ title: 'Erro ao mover card', variant: 'destructive' });
@@ -288,6 +283,16 @@ export function KanbanBoard() {
             </div>
 
             <Button
+              onClick={() => setIsColumnManagerOpen(true)}
+              variant="outline"
+              className="border-white/10 hover:bg-white/10 rounded-xl h-10 px-4"
+              title="Gerenciar Colunas"
+            >
+              <Settings className="w-4 h-4 mr-2" />
+              Colunas
+            </Button>
+
+            <Button
               onClick={() => setIsClientDialogOpen(true)}
               className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white shadow-lg shadow-purple-500/20 rounded-xl px-6 h-10 transition-all hover:scale-105 active:scale-95"
             >
@@ -304,8 +309,8 @@ export function KanbanBoard() {
 
               {Object.entries(boardData).map(([columnId, column]) => {
                 // Calcular totais da coluna
-                const totalValue = column.items.reduce((sum, item) => sum + Number(item.value || 0), 0);
-                const itemCount = column.items.length;
+                const totalValue = column.items?.reduce((sum, item) => sum + Number(item.value || 0), 0) || 0;
+                const itemCount = column.items?.length || 0;
 
                 return (
                   <Droppable key={columnId} droppableId={columnId}>
@@ -319,17 +324,20 @@ export function KanbanBoard() {
                         `}
                       >
                         {/* HEADER DA COLUNA */}
-                        <div className={`
-                            p-4 rounded-t-2xl border-b border-white/5 bg-gradient-to-b ${column.color}
-                            backdrop-blur-md relative overflow-hidden group
-                        `}>
+                        <div
+                          className="p-4 rounded-t-2xl border-b border-white/5 backdrop-blur-md relative overflow-hidden group"
+                          style={{
+                            background: `linear-gradient(to bottom, ${column.color}33, ${column.color}11)`,
+                            borderColor: `${column.color}80`
+                          }}
+                        >
                           <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                           <div className="flex justify-between items-start mb-2 relative z-10">
-                            <h3 className="font-bold text-white text-lg tracking-wide">{column.name}</h3>
+                            <h3 className="font-bold text-white text-lg tracking-wide">{column.title}</h3>
                             <Badge className="bg-black/40 text-white border-none backdrop-blur-sm">{itemCount}</Badge>
                           </div>
                           <div className="flex justify-between items-end relative z-10">
-                            <span className="text-xs text-white/60 font-medium">{column.description}</span>
+                            <span className="text-xs text-white/60 font-medium">Leads: {itemCount}</span>
                             <span className="text-sm font-bold text-white/90 font-mono tracking-tight">
                               {totalValue > 0 ? formatCurrency(totalValue) : '-'}
                             </span>
@@ -450,6 +458,16 @@ export function KanbanBoard() {
           if (shouldRefetch) fetchClients();
         }}
         client={null}
+      />
+
+      <ColumnManagerDialog
+        isOpen={isColumnManagerOpen}
+        onClose={() => setIsColumnManagerOpen(false)}
+        columns={columns}
+        onSuccess={() => {
+          fetchColumns();
+          fetchClients();
+        }}
       />
     </>
   );
