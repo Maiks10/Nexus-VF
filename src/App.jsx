@@ -105,8 +105,6 @@ function CrmApp() {
         );
       case 'kanban':
         return <KanbanBoard />;
-      case 'kanban':
-        return <KanbanBoard />;
       case 'clients':
         return <ClientsTable />;
       case 'support':
@@ -121,8 +119,7 @@ function CrmApp() {
       case 'funnel-builder':
         return <FunnelCanvas />;
       case 'tasks':
-        return (
-          <div className="space-y-6">
+        return <TasksBoard />;
             <div>
               <h1 className="text-3xl font-bold text-white mb-2">Tarefas</h1>
               <p className="text-gray-400">Gerencie suas tarefas e projetos</p>
@@ -130,47 +127,47 @@ function CrmApp() {
             <div className="glass-effect border-white/10 p-8 rounded-xl text-center">
               <p className="text-gray-400">Board de Tarefas será implementado em breve</p>
             </div>
-          </div>
+          </div >
         );
       case 'integrations':
-        return <IntegrationsPanel />;
+  return <IntegrationsPanel />;
       case 'settings':
-        return <SettingsPanel />;
+  return <SettingsPanel />;
       case 'traffic':
-        return <Traffic />;
+  return <Traffic />;
       case 'whatsapp':
-        return <WhatsAppIntegration />;
+  return <WhatsAppIntegration />;
       default:
-        return null;
-    }
+  return null;
+}
   };
 
-  return (
-    <>
-      <Helmet>
-        <title>Nexus Flow - CRM Solutions</title>
-        <meta name="description" content="Sistema CRM completo..." />
-      </Helmet>
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900">
-        <Sidebar activeSection={activeSection} onSectionChange={setActiveSection} onSignOut={signOut} />
-        <main className="ml-64">
-          <div className="p-8 max-w-[1920px] mx-auto">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeSection}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-              >
-                {renderContent()}
-              </motion.div>
-            </AnimatePresence>
-          </div>
-        </main>
-      </div>
-    </>
-  );
+return (
+  <>
+    <Helmet>
+      <title>Nexus Flow - CRM Solutions</title>
+      <meta name="description" content="Sistema CRM completo..." />
+    </Helmet>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900">
+      <Sidebar activeSection={activeSection} onSectionChange={setActiveSection} onSignOut={signOut} />
+      <main className="ml-64">
+        <div className="p-8 max-w-[1920px] mx-auto">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeSection}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.3 }}
+            >
+              {renderContent()}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </main>
+    </div>
+  </>
+);
 }
 
 function App() {
