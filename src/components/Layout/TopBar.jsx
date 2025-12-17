@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
-import { Bell, ChevronDown } from 'lucide-react';
+import { Bell, ChevronDown, Settings, CreditCard, User, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
     DropdownMenuTrigger,
+    DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
 
-export function TopBar() {
+export function TopBar({ onSignOut, onSectionChange }) {
     const [selectedAccount, setSelectedAccount] = useState('Conta Principal (001)');
     const [notifications, setNotifications] = useState(3);
 
@@ -54,9 +55,44 @@ export function TopBar() {
                     )}
                 </Button>
                 <div className="flex items-center gap-3 pl-4 border-l border-white/10">
-                    <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-xs font-bold text-white">
-                        MK
-                    </div>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <button className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer">
+                                <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-xs font-bold text-white">
+                                    MK
+                                </div>
+                                <ChevronDown className="w-4 h-4 text-gray-400" />
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-slate-900 border-white/10 text-white w-56">
+                            <DropdownMenuItem
+                                className="hover:bg-white/10 cursor-pointer"
+                                onClick={() => onSectionChange?.('settings')}
+                            >
+                                <User className="w-4 h-4 mr-2" />
+                                Perfil do Usuário
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                className="hover:bg-white/10 cursor-pointer"
+                                onClick={() => onSectionChange?.('settings')}
+                            >
+                                <Settings className="w-4 h-4 mr-2" />
+                                Configurações
+                            </DropdownMenuItem>
+                            <DropdownMenuItem className="hover:bg-white/10 cursor-pointer">
+                                <CreditCard className="w-4 h-4 mr-2" />
+                                Assinaturas
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator className="bg-white/10" />
+                            <DropdownMenuItem
+                                className="hover:bg-red-500/10 text-red-400 hover:text-red-300 cursor-pointer"
+                                onClick={() => onSignOut?.()}
+                            >
+                                <LogOut className="w-4 h-4 mr-2" />
+                                Sair
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
             </div>
         </div>

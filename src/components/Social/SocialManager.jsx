@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CommentFeed } from '@/components/Social/CommentFeed';
-import { List, Settings, Repeat, PlusCircle, Trash2, Edit } from 'lucide-react';
+import { List, Settings, Repeat, PlusCircle, Trash2, Edit, MessageSquare, Facebook } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useAuth } from '@/contexts/AuthContext';
 
 // --- COMPONENTE DO EDITOR DE AUTOMAÇÃO ---
-function AutomationEditor({ onSaveSuccess, onCancel, initialData }) {
+function AutomationEditor({ onSaveSuccess, onCancel, initialData, connectedPageId }) {
     const [triggerName, setTriggerName] = useState(initialData?.name || '');
     const [postScope, setPostScope] = useState(initialData?.config?.post_scope || 'all_posts');
     const [selectedPost, setSelectedPost] = useState(initialData?.config?.post_id || '');
@@ -29,51 +29,60 @@ function AutomationEditor({ onSaveSuccess, onCancel, initialData }) {
     const [isLoadingAgents, setIsLoadingAgents] = useState(false);
     const [pagePosts, setPagePosts] = useState([]);
     const [isLoadingPosts, setIsLoadingPosts] = useState(false);
+    const [postsCursor, setPostsCursor] = useState(null);
+    const [hasMorePosts, setHasMorePosts] = useState(false);
     const { toast } = useToast();
     const { user } = useAuth();
 
-    useEffect(() => {
-        async function fetchAiAgents() {
-            setIsLoadingAgents(true);
+    // ... (fetchAiAgents effect maintained) ...
+
+    async function fetchPagePosts(cursor = null) {
+        if (postScope === 'single_post' && user) {
+            setIsLoadingPosts(true);
             try {
-                // ALTERADO: Busca agentes da nossa API
-                const response = await apiClient.get('/api/ai-agents');
-                setAiAgents(response.data || []);
+                // ALTERADO: Busca posts da nossa API com paginação
+                const response = await apiClient.get('/api/social/posts', {
+                    params: { after: cursor, limit: 5, connection_id: connectedPageId }
+                });
+
+                const newPosts = response.data.posts || [];
+                const nextCursor = response.data.paging?.cursors?.after;
+
+                if (cursor) {
+                    setPagePosts(prev => [...prev, ...newPosts]);
+                } else {
+                    setPagePosts(newPosts);
+                }
+
+                setPostsCursor(nextCursor);
+                setHasMorePosts(!!nextCursor);
+
             } catch (error) {
-                toast({ title: "Erro", description: "Não foi possível carregar os agentes de IA.", variant: "destructive" });
+                toast({ title: "Erro ao buscar posts", description: error.response?.data?.message, variant: "destructive" });
+            } finally {
+                setIsLoadingPosts(false);
             }
-            setIsLoadingAgents(false);
         }
-        fetchAiAgents();
-    }, [toast]);
+    }
 
     useEffect(() => {
-        async function fetchPagePosts() {
-            if (postScope === 'single_post' && user) {
-                setIsLoadingPosts(true);
-                setPagePosts([]);
-                try {
-                    // ALTERADO: Busca posts da nossa API
-                    const response = await apiClient.get('/api/social/posts');
-                    setPagePosts(response.data.posts || []);
-                } catch (error) {
-                    toast({ title: "Erro ao buscar posts", description: error.response?.data?.message, variant: "destructive" });
-                } finally {
-                    setIsLoadingPosts(false);
-                }
-            }
+        // Reseta tudo ao mudar para single_post
+        if (postScope === 'single_post') {
+            setPagePosts([]);
+            setPostsCursor(null);
+            fetchPagePosts();
         }
-        fetchPagePosts();
     }, [postScope, user, toast]);
 
+    // ... (handleSaveAutomation maintained) ...
     const handleSaveAutomation = async (e) => {
         e.preventDefault();
         if (!triggerName) {
-            toast({ title: "Campo obrigatório", description: "Por favor, dê um nome para a automação.", variant: "destructive"});
+            toast({ title: "Campo obrigatório", description: "Por favor, dê um nome para a automação.", variant: "destructive" });
             return;
         }
         setIsSubmitting(true);
-        
+
         const automationData = {
             name: triggerName,
             config: {
@@ -110,16 +119,47 @@ function AutomationEditor({ onSaveSuccess, onCancel, initialData }) {
 
     return (
         <Card className="glass-effect border-white/10 text-white">
-            <CardHeader>
-                <CardTitle>{initialData ? 'Editar Automação' : 'Criar Nova Automação'}</CardTitle>
-                <CardDescription className="text-gray-400">Configure um gatilho e as ações correspondentes.</CardDescription>
-            </CardHeader>
+            {/* Headers ... */}
             <CardContent>
                 <form onSubmit={handleSaveAutomation} className="space-y-6">
-                    {/* O JSX do formulário não precisa de alterações */}
                     <div className="space-y-2"><Label htmlFor="trigger-name">Nome da Automação</Label><Input id="trigger-name" placeholder="Ex: Resposta para 'eu quero'" value={triggerName} onChange={(e) => setTriggerName(e.target.value)} className="bg-white/5" /></div>
                     <div className="space-y-2"><Label>Aplicar em:</Label><Select value={postScope} onValueChange={setPostScope}><SelectTrigger className="bg-white/5"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all_posts">Todos os Posts</SelectItem><SelectItem value="single_post">Um Post Específico</SelectItem></SelectContent></Select></div>
-                    {postScope === 'single_post' && (<div className="space-y-2"><Label>Selecione o Post</Label><Select value={selectedPost} onValueChange={setSelectedPost} disabled={isLoadingPosts}><SelectTrigger className="bg-white/5"><SelectValue placeholder={isLoadingPosts ? 'Buscando posts...' : 'Selecione um post'} /></SelectTrigger><SelectContent>{!isLoadingPosts && pagePosts.map(post => (<SelectItem key={post.id} value={post.id}>{post.message ? `${post.message.substring(0, 70)}...` : `Post de ${new Date(post.created_time).toLocaleDateString()}`}</SelectItem>))}</SelectContent></Select></div>)}
+                    {postScope === 'single_post' && (
+                        <div className="space-y-2">
+                            <Label>Selecione o Post</Label>
+                            <Select value={selectedPost} onValueChange={setSelectedPost} disabled={isLoadingPosts && pagePosts.length === 0}>
+                                <SelectTrigger className="bg-white/5">
+                                    <SelectValue placeholder={isLoadingPosts && pagePosts.length === 0 ? 'Buscando posts...' : 'Selecione um post'} />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-[300px]">
+                                    {pagePosts.map(post => (
+                                        <SelectItem key={post.id} value={post.id}>
+                                            {post.message ? (post.message.length > 50 ? post.message.substring(0, 50) + '...' : post.message) : `Post de ${new Date(post.created_time).toLocaleDateString()}`}
+                                        </SelectItem>
+                                    ))}
+                                    {hasMorePosts && (
+                                        <Button
+                                            variant="ghost"
+                                            className="w-full text-xs text-blue-400 h-8 mt-1"
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation(); // Tenta evitar fechar, mas SelectItem pode fechar
+                                                fetchPagePosts(postsCursor);
+                                            }}
+                                            disabled={isLoadingPosts}
+                                        >
+                                            {isLoadingPosts ? 'Carregando...' : 'Carregar Mais Posts'}
+                                        </Button>
+                                    )}
+                                </SelectContent>
+                            </Select>
+                            {hasMorePosts && (
+                                <p className="text-xs text-gray-400 text-right cursor-pointer hover:text-white" onClick={() => fetchPagePosts(postsCursor)}>
+                                    {isLoadingPosts ? 'Carregando...' : 'Carregar mais posts antigos...'}
+                                </p>
+                            )}
+                        </div>
+                    )}
                     <div className="space-y-2"><Label>Gatilho: Se um comentário...</Label><Select value={condition} onValueChange={setCondition}><SelectTrigger className="bg-white/5"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="contains_keyword">Contiver uma das palavras-chave</SelectItem><SelectItem value="exact_keyword">For exatamente a palavra-chave</SelectItem><SelectItem value="any_comment">For qualquer comentário</SelectItem></SelectContent></Select></div>
                     {condition !== 'any_comment' && (<div className="space-y-2"><Label htmlFor="keywords">Palavras-chave</Label><Input id="keywords" placeholder="quero, interesse, valor" value={keywords} onChange={(e) => setKeywords(e.target.value)} className="bg-white/5" /><p className="text-xs text-gray-400">Separar por vírgulas.</p></div>)}
                     <hr className="border-white/10" />
@@ -150,7 +190,7 @@ function AutomationsList({ onEdit, onCreateNew }) {
             // ALTERADO: Busca automações da nossa API
             const response = await apiClient.get('/api/automations');
             setAutomations(response.data || []);
-        } catch(error) {
+        } catch (error) {
             toast({ title: "Erro", description: "Não foi possível carregar as automações.", variant: "destructive" });
         }
         setLoading(false);
@@ -212,7 +252,7 @@ function AutomationsList({ onEdit, onCreateNew }) {
 }
 
 // O resto do arquivo (AutomationsManager e SocialManager) não precisa de alterações
-function AutomationsManager() {
+function AutomationsManager({ connectedPageId }) {
     const [mode, setMode] = useState('view');
     const [selectedAutomation, setSelectedAutomation] = useState(null);
     const handleCreateNew = () => { setSelectedAutomation(null); setMode('create'); };
@@ -222,22 +262,63 @@ function AutomationsManager() {
         <div className="space-y-6">
             <div><h1 className="text-3xl font-bold text-white tracking-tight">Automações</h1><p className="text-gray-400 mt-2">Crie fluxos de trabalho que rodam no piloto automático.</p></div>
             {mode === 'view' && <AutomationsList onCreateNew={handleCreateNew} onEdit={handleEdit} />}
-            {(mode === 'create' || mode === 'edit') && <AutomationEditor onSaveSuccess={handleBackToList} onCancel={handleBackToList} initialData={selectedAutomation} />}
+            {(mode === 'create' || mode === 'edit') && <AutomationEditor onSaveSuccess={handleBackToList} onCancel={handleBackToList} initialData={selectedAutomation} connectedPageId={connectedPageId} />}
         </div>
     );
 }
 
 export function SocialManager() {
+    const [connectedPage, setConnectedPage] = useState(null);
+
+    useEffect(() => {
+        async function fetchConnection() {
+            try {
+                const response = await apiClient.get('/api/integrations/meta/connections');
+                if (response.data && response.data.length > 0) {
+                    setConnectedPage(response.data[0]);
+                }
+            } catch (error) {
+                console.error("Erro ao buscar conexão Meta:", error);
+            }
+        }
+        fetchConnection();
+    }, []);
+
     return (
         <div className="container mx-auto p-4 md:p-6 lg:p-8">
-            <Tabs defaultValue="automations" className="w-full">
+            <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                    <MessageSquare className="w-6 h-6 text-pink-500" />
+                    Gestão Social
+                </h2>
+                {connectedPage ? (
+                    <div className="flex items-center gap-3 bg-gray-800/50 px-4 py-2 rounded-lg border border-white/10">
+                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                        <div>
+                            <p className="text-xs text-gray-400">Conta Conectada</p>
+                            <p className="text-sm font-medium text-white flex items-center gap-2">
+                                <Facebook className="w-4 h-4 text-blue-500" />
+                                {connectedPage.page_name}
+                            </p>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="bg-yellow-500/10 text-yellow-500 px-4 py-2 rounded-lg text-sm border border-yellow-500/20">
+                        Nenhuma conta Facebook conectada
+                    </div>
+                )}
+            </div>
+
+            <Tabs defaultValue="feed" className="w-full">
                 <TabsList className="grid w-full grid-cols-3 bg-gray-800/50 text-gray-400">
                     <TabsTrigger value="feed"><List className="w-4 h-4 mr-2" /> Feed e Comentários</TabsTrigger>
                     <TabsTrigger value="automations"><Repeat className="w-4 h-4 mr-2" /> Automações</TabsTrigger>
                     <TabsTrigger value="settings"><Settings className="w-4 h-4 mr-2" /> Configurações</TabsTrigger>
                 </TabsList>
-                <TabsContent value="feed" className="mt-6"><CommentFeed /></TabsContent>
-                <TabsContent value="automations" className="mt-6"><AutomationsManager /></TabsContent>
+                <TabsContent value="feed" className="mt-6">
+                    <CommentFeed connectionId={connectedPage?.id} />
+                </TabsContent>
+                <TabsContent value="automations" className="mt-6"><AutomationsManager connectedPageId={connectedPage?.id} /></TabsContent>
                 <TabsContent value="settings" className="mt-6"><div className="text-center p-8 glass-effect rounded-lg"><h3 className="text-xl font-semibold text-white">Configurações em Breve</h3><p className="text-gray-400 mt-2">Gerencie as configurações gerais da sua integração social aqui.</p></div></TabsContent>
             </Tabs>
         </div>

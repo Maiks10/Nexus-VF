@@ -8,7 +8,9 @@ import { Plus, Bot, Settings } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 // ALTERADO: Importando apiClient
 import apiClient from '@/lib/customSupabaseClient';
-import { AgentFormDialog } from './AgentFormDialog';
+import { AgentFormDialog } from './AgentFormDialog'; // Mantendo caso queira rollback, mas não usando
+import { AgentBuilder } from '../AgentBuilder/AgentBuilder';
+import { AnimatePresence } from 'framer-motion';
 
 export function AgentsList() {
   const [agents, setAgents] = useState([]);
@@ -88,11 +90,10 @@ export function AgentsList() {
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                        agent.is_active 
-                          ? 'bg-gradient-to-r from-green-500 to-emerald-500' 
-                          : 'bg-gray-600'
-                      }`}>
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${agent.is_active
+                        ? 'bg-gradient-to-r from-green-500 to-emerald-500'
+                        : 'bg-gray-600'
+                        }`}>
                         <Bot className="w-6 h-6 text-white" />
                       </div>
                       <div>
@@ -100,25 +101,25 @@ export function AgentsList() {
                         <p className="text-sm text-gray-400">{agent.provider}</p>
                       </div>
                     </div>
-                    <Switch 
+                    <Switch
                       checked={agent.is_active}
                       onCheckedChange={() => handleToggleAgent(agent)}
                     />
                   </div>
                 </CardHeader>
-                
+
                 <CardContent className="space-y-4">
                   <p className="text-gray-300 text-sm h-10 truncate">{agent.description}</p>
-                  
+
                   <div className="flex items-center justify-between">
                     <Badge variant={agent.is_active ? 'default' : 'secondary'}>
                       {agent.is_active ? 'Ativo' : 'Inativo'}
                     </Badge>
                   </div>
                   <div className="flex gap-2 pt-4 border-t border-white/10">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
+                    <Button
+                      variant="outline"
+                      size="sm"
                       className="flex-1 border-white/10"
                       onClick={() => handleConfigureAgent(agent)}
                     >
@@ -132,11 +133,27 @@ export function AgentsList() {
           ))}
         </div>
       </div>
-      <AgentFormDialog
-        isOpen={isDialogOpen}
-        onClose={handleDialogClose}
-        agent={selectedAgent}
-      />
+      <AnimatePresence>
+        {isDialogOpen && (
+          <AgentBuilder
+            agent={selectedAgent}
+            onClose={() => handleDialogClose(false)}
+            onSave={async (agentData) => {
+              try {
+                if (selectedAgent) {
+                  await apiClient.put(`/api/ai-agents/${selectedAgent.id}`, agentData);
+                } else {
+                  await apiClient.post('/api/ai-agents', { ...agentData, is_active: true });
+                }
+                toast({ title: "Agente salvo com sucesso!" });
+                handleDialogClose(true);
+              } catch (error) {
+                toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" });
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
     </>
   );
 }

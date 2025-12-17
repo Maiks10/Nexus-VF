@@ -44,14 +44,17 @@ export const EvolutionService = {
   },
 
   // Chat & Messages
-  async fetchChats(instanceName) {
-    const response = await api.get('/whatsapp/chats', { params: { instanceName } });
+  async fetchChats() {
+    // MODIFICADO: Removido instanceName - backend busca por user_id apenas
+    const response = await api.get('/whatsapp/chats');
     return response.data;
   },
 
   async fetchMessages(instanceName, chatJid) {
+    // MODIFICADO: Removido instanceName dos params - backend busca por user_id + chat_jid
+    // Mantemos instanceName no parâmetro por compatibilidade mas não enviamos
     const response = await api.get('/whatsapp/messages', {
-      params: { instanceName, chat_jid: chatJid }
+      params: { chat_jid: chatJid }
     });
     return response.data;
   },

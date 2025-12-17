@@ -83,3 +83,26 @@ body {
 .react-flow__minimap {
     @apply bg-slate-800/50 border border-white/10 rounded-lg;
 }
+
+/* Custom Scrollbar - CRM Theme */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-slate-800/50 rounded-lg;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-purple-500/50 rounded-lg;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  @apply bg-purple-500/70;
+}
+
+/* Firefox */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 85, 247, 0.5) rgba(30, 41, 59, 0.5);
+}

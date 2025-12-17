@@ -19,10 +19,7 @@ export function ClientFormDialog({ isOpen, onClose, client }) {
     name: '',
     email: '',
     phone: '',
-    status: 'Lead',
-    segment: '',
-    value: 0,
-    kanban_stage: 'new_lead',
+    source: 'manual',
     temperature: 'cold'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -34,10 +31,7 @@ export function ClientFormDialog({ isOpen, onClose, client }) {
         name: client.name || '',
         email: client.email || '',
         phone: client.phone || '',
-        status: client.status || 'Lead',
-        segment: client.segment || '',
-        value: client.value || 0,
-        kanban_stage: client.kanban_stage || 'new_lead',
+        source: client.source || 'manual',
         temperature: client.temperature || 'cold'
       });
     } else {
@@ -46,10 +40,7 @@ export function ClientFormDialog({ isOpen, onClose, client }) {
         name: '',
         email: '',
         phone: '',
-        status: 'Lead',
-        segment: '',
-        value: 0,
-        kanban_stage: 'new_lead',
+        source: 'manual',
         temperature: 'cold'
       });
     }
@@ -64,7 +55,7 @@ export function ClientFormDialog({ isOpen, onClose, client }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
-    
+
     try {
       if (client) {
         // Se estiver editando um cliente, usa o método PUT (ou PATCH)
@@ -113,9 +104,21 @@ export function ClientFormDialog({ isOpen, onClose, client }) {
               <Label htmlFor="phone" className="text-right">Telefone</Label>
               <Input id="phone" name="phone" value={formData.phone} onChange={handleChange} className="col-span-3 bg-white/5" />
             </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="value" className="text-right">Valor</Label>
-              <Input id="value" name="value" type="number" value={formData.value} onChange={handleChange} className="col-span-3 bg-white/5" />
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="source" className="text-right">Fonte</Label>
+              <select id="source" name="source" value={formData.source} onChange={handleChange} className="col-span-3 bg-white/5 border border-white/10 rounded-md px-3 py-2 text-white">
+                <option value="manual">Manual</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="kiwify">Kiwify</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="temperature" className="text-right">Termômetro</Label>
+              <select id="temperature" name="temperature" value={formData.temperature} onChange={handleChange} className="col-span-3 bg-white/5 border border-white/10 rounded-md px-3 py-2 text-white">
+                <option value="cold">❄️ Frio</option>
+                <option value="warm">🌡️ Morno</option>
+                <option value="hot">🔥 Quente</option>
+              </select>
             </div>
           </div>
           <DialogFooter>

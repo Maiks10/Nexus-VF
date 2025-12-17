@@ -18,19 +18,33 @@ function parseAuthArtifact(data) {
   // Debug para você ver no navegador (F12) o que está chegando
   console.log("📦 Dados recebidos no Parse:", data);
 
+  // Evolution v3 Go retorna: { data: { Qrcode: "data:image/png;base64,...", Code: "2@..." } }
+  // Suporta ambos os formatos: PascalCase (v3 Go) e camelCase (v2/docs)
+  const qrData = data?.data || data;
+
   // 1. Tenta encontrar a string base64 em vários lugares possíveis do JSON
-  let base64 = 
-    data?.qrcode?.base64 || 
-    data?.base64 || 
-    data?.qrcode || 
-    data?.qr || 
+  let base64 =
+    qrData?.Qrcode ||           // v3 Go (PascalCase) - já vem com prefixo completo!
+    qrData?.qrcode?.base64 ||
+    qrData?.base64 ||
+    qrData?.qrcode ||
+    qrData?.qr ||
+    data?.qrcode?.base64 ||     // fallback estrutura antiga
+    data?.base64 ||
+    data?.qrcode ||
+    data?.qr ||
     (typeof data === 'string' && data.length > 100 ? data : null);
 
   // Se achou algo que parece uma imagem
   if (base64 && typeof base64 === 'string') {
-    // Remove prefixo se já vier duplicado
+    // Se já vier com prefixo, usa direto
+    if (base64.startsWith('data:image')) {
+      return { type: 'img', value: base64 };
+    }
+
+    // Remove prefixo se já vier duplicado e adiciona novamente
     base64 = base64.replace('data:image/png;base64,', '');
-    
+
     // Se for uma string muito curta, provavelmente não é imagem (é um erro ou status)
     if (base64.length < 50) return { type: 'none', value: null };
 
@@ -38,14 +52,28 @@ function parseAuthArtifact(data) {
   }
 
   // 2. Tenta encontrar códigos de pareamento (Pairing Code)
-  const code = data?.pairingCode || data?.code || data?.qrcode?.pairingCode;
-  if (code) return { type: 'code', value: String(code) };
+  const code = qrData?.Code || data?.pairingCode || data?.code || data?.qrcode?.pairingCode;
+  if (code && typeof code === 'string' && code.length < 50) {
+    return { type: 'code', value: String(code) };
+  }
 
   return { type: 'none', value: null };
 }
 
 function normalizeStatus(resp) {
   try {
+    // Evolution v3 Check: { Connected: true, LoggedIn: false/true }
+    // As vezes vem dentro de 'data', as vezes direto.
+    const raw = resp?.data || resp;
+
+    // Se tiver Connected: true explicitamente (v3)
+    if (typeof raw?.Connected === 'boolean') {
+      if (raw.Connected === true && raw.LoggedIn === true) return 'connected';
+      if (raw.Connected === true && raw.LoggedIn === false) return 'qr';
+      if (raw.Connected === false) return 'disconnected';
+    }
+
+    // Formatos antigos (v2 ou string status)
     const s = typeof resp === 'string' ? resp : resp?.instance?.state || resp?.state || resp?.status || 'unknown';
     const t = String(s || '').toLowerCase();
 
@@ -94,15 +122,15 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
     setIsConnecting(true);
     setArtifact({ type: 'none', value: null }); // Limpa anterior
     setStatus('qr'); // Assume estado visual de QR
-    
+
     try {
       // Chama o backend (que agora tem a lógica de auto-correção)
       const responseData = await EvolutionService.connectInstance(instance.instance_name);
-      
+
       console.log("📡 Resposta do Backend:", responseData); // OLHE ISTO NO CONSOLE DO NAVEGADOR
 
       const parsed = parseAuthArtifact(responseData);
-      
+
       if (parsed.type !== 'none') {
         setArtifact(parsed);
         // Inicia polling para saber quando o user escaneou
@@ -112,12 +140,12 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
         // Se não veio QR, pode ser que já esteja conectado ou erro
         const currentStatus = normalizeStatus(responseData);
         if (currentStatus === 'connected') {
-            setStatus('connected');
-            setIsConnecting(false);
-            toast({ title: 'Já conectado!', description: 'Esta instância já está pronta.' });
+          setStatus('connected');
+          setIsConnecting(false);
+          toast({ title: 'Já conectado!', description: 'Esta instância já está pronta.' });
         } else {
-            // Mantém em connecting para tentar de novo manual ou mostra erro
-            toast({ title: 'Aguardando...', description: 'QR Code solicitado. Se não aparecer em 5s, tente novamente.' });
+          // Mantém em connecting para tentar de novo manual ou mostra erro
+          toast({ title: 'Aguardando...', description: 'QR Code solicitado. Se não aparecer em 5s, tente novamente.' });
         }
       }
     } catch (error) {
@@ -149,7 +177,7 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
   return (
     <Card className="glass-effect border-white/10 overflow-hidden relative group">
       <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-      
+
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="text-lg text-white font-medium truncate max-w-[200px]" title={instance.display_name}>
           {instance.display_name}
@@ -160,7 +188,7 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
       </CardHeader>
 
       <CardContent className="flex flex-col items-center justify-center min-h-[240px] space-y-6 relative z-10">
-        
+
         {/* ESTADO: CONECTADO */}
         {status === 'connected' && (
           <div className="flex flex-col items-center animate-in fade-in zoom-in duration-500">
@@ -175,12 +203,12 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
 
         {/* ESTADO: MOSTRANDO QR CODE */}
         {isConnecting && artifact.type === 'img' && status !== 'connected' && (
-           <div className="flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="bg-white p-3 rounded-xl shadow-xl shadow-black/50 mb-3">
-               <img src={artifact.value} alt="QR Code" className="w-48 h-48 object-contain" />
-             </div>
-             <p className="text-xs text-gray-400 animate-pulse">Abra o WhatsApp e escaneie</p>
-           </div>
+          <div className="flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="bg-white p-3 rounded-xl shadow-xl shadow-black/50 mb-3">
+              <img src={artifact.value} alt="QR Code" className="w-48 h-48 object-contain" />
+            </div>
+            <p className="text-xs text-gray-400 animate-pulse">Abra o WhatsApp e escaneie</p>
+          </div>
         )}
 
         {/* ESTADO: CARREGANDO QR (Spinner) */}
@@ -207,12 +235,12 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
         {/* BOTÕES DE AÇÃO */}
         <div className="flex gap-3 w-full pt-2">
           {status !== 'connected' ? (
-            <Button 
-              onClick={handleConnect} 
+            <Button
+              onClick={handleConnect}
               disabled={isConnecting}
               className="flex-1 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 border-0 text-white shadow-lg shadow-indigo-900/20 transition-all hover:scale-[1.02]"
             >
-              {isConnecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <QrCode className="w-4 h-4 mr-2" />}
+              {isConnecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <QrCode className="w-4 h-4 mr-2" />}
               {isConnecting ? 'Gerando...' : 'Conectar'}
             </Button>
           ) : (
@@ -220,9 +248,9 @@ function WhatsAppInstanceCard({ instance, onAfterStatusChange }) {
               <XCircle className="mr-2 h-4 w-4" /> Desconectar
             </Button>
           )}
-          
+
           <Button onClick={checkConnectionStatus} variant="outline" size="icon" className="border-white/10 bg-white/5 hover:bg-white/10 text-white" title="Atualizar Status">
-             <RefreshCw className={`h-4 w-4 ${status === 'qr' ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 ${status === 'qr' ? 'animate-spin' : ''}`} />
           </Button>
         </div>
 
@@ -270,7 +298,7 @@ function WhatsAppIntegration() {
   };
 
   const handleDeleteInstance = async (id) => {
-    if(!confirm("Tem certeza que deseja remover esta conta do painel?")) return;
+    if (!confirm("Tem certeza que deseja remover esta conta do painel?")) return;
     try {
       await EvolutionService.deleteInstance(id);
       setInstances(instances.filter((i) => i.id !== id));
@@ -296,25 +324,25 @@ function WhatsAppIntegration() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {loading && (
-            [1,2,3].map(i => (
-                <Card key={i} className="h-[300px] glass-effect border-white/5 animate-pulse bg-white/5"></Card>
-            ))
+          [1, 2, 3].map(i => (
+            <Card key={i} className="h-[300px] glass-effect border-white/5 animate-pulse bg-white/5"></Card>
+          ))
         )}
-        
+
         {!loading && instances.length === 0 && (
-            <Card className="col-span-full h-40 flex flex-col items-center justify-center glass-effect border-white/10 border-dashed">
-                <p className="text-gray-400">Nenhuma conta conectada ainda.</p>
-                <Button variant="link" onClick={() => setIsDialogOpen(true)} className="text-emerald-400">Criar a primeira</Button>
-            </Card>
+          <Card className="col-span-full h-40 flex flex-col items-center justify-center glass-effect border-white/10 border-dashed">
+            <p className="text-gray-400">Nenhuma conta conectada ainda.</p>
+            <Button variant="link" onClick={() => setIsDialogOpen(true)} className="text-emerald-400">Criar a primeira</Button>
+          </Card>
         )}
 
         {!loading && instances.map((instance) => (
           <motion.div key={instance.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
             <div className="relative">
-              <Button 
-                size="icon" 
-                variant="ghost" 
-                className="absolute right-2 top-2 z-20 h-8 w-8 text-gray-500 hover:text-red-400 hover:bg-red-500/10" 
+              <Button
+                size="icon"
+                variant="ghost"
+                className="absolute right-2 top-2 z-20 h-8 w-8 text-gray-500 hover:text-red-400 hover:bg-red-500/10"
                 onClick={() => handleDeleteInstance(instance.id)}
               >
                 <Trash2 className="h-4 w-4" />
@@ -332,13 +360,13 @@ function WhatsAppIntegration() {
           </DialogHeader>
           <div className="py-4 space-y-4">
             <div className="space-y-2">
-                <label className="text-sm text-gray-400">Nome da conta (Ex: Vendas, Suporte)</label>
-                <Input 
-                    placeholder="Digite um nome para identificar..." 
-                    value={newInstanceName} 
-                    onChange={(e) => setNewInstanceName(e.target.value)} 
-                    className="bg-white/5 border-white/10 text-white focus:border-emerald-500" 
-                />
+              <label className="text-sm text-gray-400">Nome da conta (Ex: Vendas, Suporte)</label>
+              <Input
+                placeholder="Digite um nome para identificar..."
+                value={newInstanceName}
+                onChange={(e) => setNewInstanceName(e.target.value)}
+                className="bg-white/5 border-white/10 text-white focus:border-emerald-500"
+              />
             </div>
           </div>
           <DialogFooter>

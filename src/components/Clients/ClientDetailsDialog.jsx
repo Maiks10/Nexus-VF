@@ -15,8 +15,8 @@ export function ClientDetailsDialog({ isOpen, onClose, client }) {
     return null;
   }
 
-  // Pega as tags da string 'segment', remove espaços e filtra as vazias
-  const tags = client.segment ? client.segment.split(',').map(tag => tag.trim()).filter(Boolean) : [];
+  // Tags vem do banco como array
+  const tags = client.tags || [];
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -32,7 +32,7 @@ export function ClientDetailsDialog({ isOpen, onClose, client }) {
             Detalhes do contato e histórico de etiquetas.
           </DialogDescription>
         </DialogHeader>
-        
+
         <div className="py-4 space-y-4">
           <div className="text-sm">
             <strong className="text-gray-400">Email:</strong>
@@ -42,7 +42,7 @@ export function ClientDetailsDialog({ isOpen, onClose, client }) {
             <strong className="text-gray-400">Telefone:</strong>
             <p className="text-white">{client.phone || 'Não informado'}</p>
           </div>
-           <div className="text-sm">
+          <div className="text-sm">
             <strong className="text-gray-400">Valor Acumulado:</strong>
             <p className="text-green-400 font-bold">R$ {client.value?.toFixed(2) || '0.00'}</p>
           </div>
@@ -52,9 +52,9 @@ export function ClientDetailsDialog({ isOpen, onClose, client }) {
           </div>
           <div className="text-sm">
             <strong className="text-gray-400">Origem:</strong>
-             <div className="flex items-center gap-2 capitalize mt-1">
-                <PlatformIcon platform={client.platform} />
-                <span className="text-white">{client.platform || 'Manual'}</span>
+            <div className="flex items-center gap-2 capitalize mt-1">
+              <PlatformIcon platform={client.platform} />
+              <span className="text-white">{client.platform || 'Manual'}</span>
             </div>
           </div>
 

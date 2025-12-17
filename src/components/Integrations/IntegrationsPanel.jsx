@@ -4,35 +4,64 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Settings, CheckCircle, AlertCircle, Facebook, ShoppingCart, Instagram, Send as TelegramIcon, Calendar, Zap } from 'lucide-react';
+import { Settings, CheckCircle, AlertCircle, Facebook, ShoppingCart, Instagram, Send as TelegramIcon, Calendar, Zap, MessageSquare } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { IntegrationConfigDialog } from './IntegrationConfigDialog';
 
 const initialIntegrations = [
-  { id: 'evolution_api', name: 'Evolution API (WhatsApp)', description: 'Conecte o WhatsApp via API não-oficial Evolution.', icon: Zap, color: 'from-green-500 to-teal-500', fields: [{name: 'Evolution API URL', type:'text'}, {name: 'API Key', type: 'password'}] },
-  { 
-    id: 'meta_business', 
-    name: 'Facebook & Instagram', 
-    description: 'Conecte suas contas para gerenciar mensagens e comentários.', 
+  {
+    id: 'meta_business',
+    name: 'Facebook & Instagram',
+    description: 'Conecte suas contas para gerenciar mensagens e comentários.',
     icon: Facebook,
     color: 'from-blue-600 to-purple-500',
-    fields: [{name: 'Conectar com Facebook & Instagram', type: 'oauth_button'}] 
+    fields: [{ name: 'Conectar com Facebook & Instagram', type: 'oauth_button' }]
   },
-  { id: 'telegram', name: 'Telegram', description: 'Conecte seu bot do Telegram para atendimento automatizado.', icon: TelegramIcon, color: 'from-sky-400 to-blue-500', fields: [{name: 'Bot Token', type:'password'}] },
-  { id: 'google_calendar', name: 'Google Calendar', description: 'Agende reuniões e eventos diretamente na agenda.', icon: Calendar, color: 'from-blue-500 to-green-500', fields: [{name: 'OAuth Connection', type: 'button'}] },
-  { id: 'kiwify', name: 'Kiwify', description: 'Receba notificações de vendas da Kiwify.', icon: ShoppingCart, color: 'from-green-600 to-green-700', fields: [{name: 'Webhook URL', type: 'copy'}, {name: 'API Key', type: 'password'}]},
-  { id: 'hotmart', name: 'Hotmart', description: 'Receba notificações de vendas da Hotmart.', icon: ShoppingCart, color: 'from-orange-600 to-orange-700', fields: [{name: 'Webhook URL', type: 'copy'}, {name: 'Hottok', type: 'password'}] },
-  { id: 'green', name: 'Green', description: 'Plataforma de produtos digitais.', icon: ShoppingCart, color: 'from-emerald-600 to-teal-700', fields: [{name: 'Webhook URL', type: 'copy'}, {name: 'API Token', type: 'password'}] },
-  { id: 'ticto', name: 'Ticto', description: 'Plataforma para infoprodutores.', icon: ShoppingCart, color: 'from-indigo-500 to-violet-600', fields: [{name: 'Webhook URL', type: 'copy'}, {name: 'API Key', type: 'password'}] },
-  { id: 'kirvano', name: 'Kirvano', description: 'Plataforma de vendas online.', icon: ShoppingCart, color: 'from-rose-500 to-pink-600', fields: [{name: 'Webhook URL', type: 'copy'}, {name: 'API Token', type: 'password'}] },
-  { id: 'cakto', name: 'Cakto', description: 'Plataforma de afiliados e infoprodutos.', icon: ShoppingCart, color: 'from-cyan-500 to-sky-600', fields: [{name: 'Webhook URL', type: 'copy'}, {name: 'Token', type: 'password'}] },
+  {
+    id: 'evolution_api',
+    name: 'Evolution API (WhatsApp)',
+    description: 'Conecte seu WhatsApp via QR Code (Requer Nginx/HTTPS configurado).',
+    icon: MessageSquare,
+    color: 'from-green-500 to-emerald-600',
+    fields: [{ name: 'Ir para Painel WhatsApp', type: 'redirect_button', route: '/whatsapp' }]
+  },
+  { id: 'telegram', name: 'Telegram', description: 'Conecte seu bot do Telegram para atendimento automatizado.', icon: TelegramIcon, color: 'from-sky-400 to-blue-500', fields: [{ name: 'Bot Token', type: 'password' }] },
+  { id: 'google_calendar', name: 'Google Calendar', description: 'Agende reuniões e eventos diretamente na agenda.', icon: Calendar, color: 'from-blue-500 to-green-500', fields: [{ name: 'OAuth Connection', type: 'button' }] },
+  { id: 'kiwify', name: 'Kiwify', description: 'Receba notificações de vendas da Kiwify.', icon: ShoppingCart, color: 'from-green-600 to-green-700', fields: [{ name: 'Webhook URL', type: 'copy' }, { name: 'API Key', type: 'password' }] },
+  { id: 'hotmart', name: 'Hotmart', description: 'Receba notificações de vendas da Hotmart.', icon: ShoppingCart, color: 'from-orange-600 to-orange-700', fields: [{ name: 'Webhook URL', type: 'copy' }, { name: 'Hottok', type: 'password' }] },
+  { id: 'green', name: 'Green', description: 'Plataforma de produtos digitais.', icon: ShoppingCart, color: 'from-emerald-600 to-teal-700', fields: [{ name: 'Webhook URL', type: 'copy' }, { name: 'API Token', type: 'password' }] },
+  { id: 'ticto', name: 'Ticto', description: 'Plataforma para infoprodutores.', icon: ShoppingCart, color: 'from-indigo-500 to-violet-600', fields: [{ name: 'Webhook URL', type: 'copy' }, { name: 'API Key', type: 'password' }] },
+  { id: 'kirvano', name: 'Kirvano', description: 'Plataforma de vendas online.', icon: ShoppingCart, color: 'from-rose-500 to-pink-600', fields: [{ name: 'Webhook URL', type: 'copy' }, { name: 'API Token', type: 'password' }] },
+  { id: 'cakto', name: 'Cakto', description: 'Plataforma de afiliados e infoprodutos.', icon: ShoppingCart, color: 'from-cyan-500 to-sky-600', fields: [{ name: 'Webhook URL', type: 'copy' }, { name: 'Token', type: 'password' }] },
 ];
 
+import apiClient from '@/lib/customSupabaseClient'; // Import necessário
+
 export function IntegrationsPanel() {
-  const [integrationsList, setIntegrationsList] = useState(initialIntegrations.map(i => ({...i, isConnected: false, isConfigured: false})));
+  const [integrationsList, setIntegrationsList] = useState(initialIntegrations.map(i => ({ ...i, isConnected: false, isConfigured: false })));
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedIntegration, setSelectedIntegration] = useState(null);
   const { toast } = useToast();
+
+  // Novo useEffect: Buscar status da conexão Meta ao carregar
+  useEffect(() => {
+    async function fetchConnections() {
+      try {
+        const response = await apiClient.get('/api/integrations/meta/connections');
+        const connections = response.data;
+
+        if (connections && connections.length > 0) {
+          const activeConn = connections[0]; // Pega a primeira conexão ativa
+          setIntegrationsList(prev => prev.map(int =>
+            int.id === 'meta_business' ? { ...int, isConnected: true, isConfigured: true, customLabel: activeConn.page_name } : int
+          ));
+        }
+      } catch (error) {
+        console.error("Erro ao buscar conexões:", error);
+      }
+    }
+    fetchConnections();
+  }, []);
 
   // ALTERADO: Lógica para lidar com o retorno do Facebook
   useEffect(() => {
@@ -55,7 +84,7 @@ export function IntegrationsPanel() {
         variant: "destructive"
       });
     }
-    
+
     // Limpa a URL para não executar a ação novamente
     if (metaAction || error) {
       window.history.replaceState(null, '', window.location.pathname);
@@ -68,7 +97,7 @@ export function IntegrationsPanel() {
       toast({ title: "Configuração necessária", description: `Por favor, configure a integração ${integration.name} antes de ativá-la.`, variant: "destructive" });
       return;
     }
-    setIntegrationsList(integrationsList.map(int => 
+    setIntegrationsList(integrationsList.map(int =>
       int.id === integrationId ? { ...int, isConnected: !int.isConnected } : int
     ));
     toast({
@@ -89,7 +118,7 @@ export function IntegrationsPanel() {
         title: "Integração Concluída!",
         description: "Sua conta foi conectada com sucesso.",
       });
-      setIntegrationsList(prev => prev.map(int => 
+      setIntegrationsList(prev => prev.map(int =>
         int.id === 'meta_business' ? { ...int, isConfigured: true, isConnected: true } : int
       ));
     }

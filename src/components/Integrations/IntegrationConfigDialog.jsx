@@ -99,20 +99,20 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
       setIsSubmitting(false);
     }
   };
-  
+
   const isPageSelectionFlow = !!integration.connection_id_for_selection;
   const isOauthFlow = integration.fields.some(field => field.type === 'oauth_button');
+  const isRedirectFlow = integration.fields.some(field => field.type === 'redirect_button'); // Novo
   const isWebhookFlow = ['kiwify', 'hotmart', 'green', 'ticto', 'kirvano', 'cakto'].includes(integration.id);
 
-  // ALTERADO: A URL do webhook agora aponta para a nossa API
-  // O backend usará o token do usuário para saber de quem é o webhook
-  const webhookUrl = isWebhookFlow && user 
-    ? `${window.location.origin}/api/webhooks/platform/${integration.id}`
-    : '';
+  // ... (código existente)
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(webhookUrl);
-    toast({ title: "URL Copiada!", description: "Cole esta URL no campo de webhook da plataforma." });
+  const handleRedirect = () => {
+    const field = integration.fields.find(f => f.type === 'redirect_button');
+    if (field?.route) {
+      window.location.hash = field.route; // Redireciona via hash (já que o App usa hash router manual)
+      onClose(false);
+    }
   };
 
   return (
@@ -123,18 +123,35 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
             {isPageSelectionFlow ? 'Selecione uma Página para Conectar' : `Configurar ${integration.name}`}
           </DialogTitle>
           <DialogDescription className="text-gray-400">
-            {isPageSelectionFlow 
-              ? 'Apenas páginas de negócio clássicas e públicas são totalmente compatíveis.' 
-              : isWebhookFlow
-              ? `Configure o webhook para receber notificações da ${integration.name}.`
-              : `Clique no botão para conectar sua conta de forma segura.`
+            {isPageSelectionFlow
+              ? 'Apenas páginas de negócio clássicas e públicas são totalmente compatíveis.'
+              : isRedirectFlow
+                ? 'Esta integração possui um painel dedicado.'
+                : isWebhookFlow
+                  ? `Configure o webhook para receber notificações da ${integration.name}.`
+                  : `Clique no botão para conectar sua conta de forma segura.`
             }
           </DialogDescription>
         </DialogHeader>
-        
+
         {isPageSelectionFlow ? (
           <PageSelection connectionId={integration.connection_id_for_selection} onClose={onClose} />
         ) : isOauthFlow ? (
+          // ...
+          <div className="py-4">
+            <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={handleFacebookConnect} disabled={isSubmitting}>
+              <Facebook className="w-4 h-4 mr-2" />
+              {isSubmitting ? 'Redirecionando...' : 'Conectar com Facebook & Instagram'}
+            </Button>
+          </div>
+        ) : isRedirectFlow ? (
+          <div className="py-4">
+            <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={handleRedirect}>
+              <MessageSquare className="w-4 h-4 mr-2" />
+              Acessar Painel WhatsApp
+            </Button>
+          </div>
+        ) : isWebhookFlow ? (
           <div className="py-4">
             <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={handleFacebookConnect} disabled={isSubmitting}>
               <Facebook className="w-4 h-4 mr-2" />
@@ -147,8 +164,8 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
               Copie a URL abaixo e cole no campo "Webhook" ou "Postback" nas configurações da {integration.name}.
             </p>
             <div className="flex items-center space-x-2">
-                <Input value={webhookUrl} readOnly className="bg-white/10" />
-                <Button onClick={copyToClipboard} variant="outline">Copiar</Button>
+              <Input value={webhookUrl} readOnly className="bg-white/10" />
+              <Button onClick={copyToClipboard} variant="outline">Copiar</Button>
             </div>
             <p className="text-xs text-gray-500">
               Esta URL é única para sua conta. Ela enviará os eventos de vendas diretamente para o seu CRM.
@@ -156,13 +173,13 @@ export function IntegrationConfigDialog({ isOpen, onClose, integration }) {
           </div>
         ) : (
           <div className="py-4">
-              {integration.fields.map(field => (
-                <div key={field.name} className="space-y-2">
-                    <label className="text-sm font-medium text-gray-300">{field.name}</label>
-                    <Input type={field.type} className="bg-white/10" />
-                </div>
-              ))}
-              <Button className="mt-4 w-full">Salvar Configuração</Button>
+            {integration.fields.map(field => (
+              <div key={field.name} className="space-y-2">
+                <label className="text-sm font-medium text-gray-300">{field.name}</label>
+                <Input type={field.type} className="bg-white/10" />
+              </div>
+            ))}
+            <Button className="mt-4 w-full">Salvar Configuração</Button>
           </div>
         )}
       </DialogContent>

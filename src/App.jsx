@@ -2,15 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sidebar } from '@/components/Layout/Sidebar';
-import { TopBar } from '@/components/Layout/TopBar';
 import { StatsCards } from '@/components/Dashboard/StatsCards';
 import { RecentActivity } from '@/components/Dashboard/RecentActivity';
 import { ClientsTable } from '@/components/Clients/ClientsTable';
 import { SupportChat } from '@/components/Support/SupportChat';
 import { AgentsList } from '@/components/AIAgents/AgentsList';
 import { FunnelCanvas } from '@/components/FunnelBuilder/FunnelCanvas';
-import { EmailCampaigns } from '@/components/EmailMarketing/EmailCampaigns';
-import { WhatsAppIntegration } from '@/components/WhatsApp/WhatsAppIntegration';
 import { IntegrationsPanel } from '@/components/Integrations/IntegrationsPanel';
 import { KanbanBoard } from '@/components/Kanban/KanbanBoard';
 import { Scheduling } from '@/components/Scheduling/Scheduling';
@@ -23,10 +20,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { LoginPage } from '@/components/Auth/LoginPage';
 import { Loader2 } from 'lucide-react';
 
+import { WhatsAppIntegration } from '@/components/WhatsApp/WhatsAppIntegration';
+
 const VALID_SECTIONS = new Set([
   'dashboard', 'kanban', 'clients', 'support', 'team-chat',
   'scheduling', 'social', 'ai-agents', 'funnel-builder',
-  'email-marketing', 'whatsapp', 'integrations', 'settings', 'traffic'
+  'integrations', 'settings', 'traffic', 'whatsapp', 'tasks'
 ]);
 
 function getInitialSection() {
@@ -106,12 +105,13 @@ function CrmApp() {
         );
       case 'kanban':
         return <KanbanBoard />;
+      case 'kanban':
+        return <KanbanBoard />;
       case 'clients':
         return <ClientsTable />;
       case 'support':
         return <SupportChat />;
-      case 'team-chat':
-        return <TeamChat />;
+
       case 'scheduling':
         return <Scheduling />;
       case 'social':
@@ -120,16 +120,26 @@ function CrmApp() {
         return <AgentsList />;
       case 'funnel-builder':
         return <FunnelCanvas />;
-      case 'email-marketing':
-        return <EmailCampaigns />;
-      case 'whatsapp':
-        return <WhatsAppIntegration />;
+      case 'tasks':
+        return (
+          <div className="space-y-6">
+            <div>
+              <h1 className="text-3xl font-bold text-white mb-2">Tarefas</h1>
+              <p className="text-gray-400">Gerencie suas tarefas e projetos</p>
+            </div>
+            <div className="glass-effect border-white/10 p-8 rounded-xl text-center">
+              <p className="text-gray-400">Board de Tarefas será implementado em breve</p>
+            </div>
+          </div>
+        );
       case 'integrations':
         return <IntegrationsPanel />;
       case 'settings':
         return <SettingsPanel />;
       case 'traffic':
         return <Traffic />;
+      case 'whatsapp':
+        return <WhatsAppIntegration />;
       default:
         return null;
     }
@@ -144,8 +154,7 @@ function CrmApp() {
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900">
         <Sidebar activeSection={activeSection} onSectionChange={setActiveSection} onSignOut={signOut} />
         <main className="ml-64">
-          <TopBar />
-          <div className="p-8">
+          <div className="p-8 max-w-[1920px] mx-auto">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeSection}
@@ -158,8 +167,8 @@ function CrmApp() {
               </motion.div>
             </AnimatePresence>
           </div>
-        </main >
-      </div >
+        </main>
+      </div>
     </>
   );
 }

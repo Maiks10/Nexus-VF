@@ -7,19 +7,20 @@ import ReactFlow, { Background, Controls, MiniMap, addEdge, useNodesState, useEd
 import 'reactflow/dist/style.css';
 import { Button } from '@/components/ui/button';
 import { Save, ArrowLeft, Zap, ZapOff } from 'lucide-react';
-// ALTERADO: Importando apiClient
 import apiClient from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { availableElements, elementConfig } from '@/components/FunnelBuilder/elements';
 import ElementSidebar from '@/components/FunnelBuilder/components/ElementSidebar';
 import NodeConfigurationPanel from '@/components/FunnelBuilder/components/NodeConfigurationPanel';
 import CustomNode from '@/components/FunnelBuilder/components/CustomNode';
+// NOVO: Importar o nosso componente de conexão customizado
 import CustomEdge from '@/components/FunnelBuilder/components/CustomEdge';
 
 const nodeTypes = {
   custom: CustomNode,
 };
 
+// NOVO: Definir os tipos de conexão que o React Flow vai usar
 const edgeTypes = {
   custom: CustomEdge,
 };
@@ -28,6 +29,7 @@ const edgeTypes = {
 const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
   const [funnelName, setFunnelName] = useState(funnel.name);
   const [isActive, setIsActive] = useState(funnel.is_active);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [agents, setAgents] = useState([]);
@@ -50,12 +52,12 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
       position: { x: node.x, y: node.y },
       data: { ...node, onSelect: onSelectNode, onRemove: removeNode },
     })),
-  [funnel.id, onSelectNode, removeNode]);
+    [funnel.id, onSelectNode, removeNode]);
 
   const initialEdges = useMemo(() =>
     (funnel.config?.connections || []).map(edge => ({
       id: `e-${edge.start}-${edge.end}`,
-      type: 'custom',
+      type: 'custom', // ALTERADO: Usar o tipo customizado
       source: edge.start.split('_')[0],
       target: edge.end.split('_')[0],
       sourceHandle: edge.start,
@@ -63,26 +65,26 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
       markerEnd: { type: MarkerType.ArrowClosed, color: '#a78bfa' },
       style: { stroke: '#a78bfa', strokeWidth: 2 },
     })),
-  [funnel.id]);
+    [funnel.id]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  // ALTERADO: fetchAgents agora usa apiClient
   useEffect(() => {
     const fetchAgents = async () => {
-        try {
-            const response = await apiClient.get('/api/ai-agents');
-            setAgents(response.data.map(agent => ({ id: agent.id, name: agent.name }))); // Mapeia para o formato necessário
-        } catch(error) {
-            console.error("Erro ao buscar agentes para o funil:", error);
-            toast({ title: 'Não foi possível carregar os agentes de IA.', variant: 'destructive' });
-        }
+      try {
+        const response = await apiClient.get('/api/ai-agents');
+        setAgents(response.data.map(agent => ({ id: agent.id, name: agent.name })));
+      } catch (error) {
+        console.error("Erro ao buscar agentes:", error);
+        toast({ title: 'Não foi possível carregar os agentes de IA.', variant: 'destructive' });
+      }
     };
     fetchAgents();
   }, [toast]);
 
-  const onConnect = useCallback((params) => setEdges((eds) => addEdge({ ...params, type: 'custom', markerEnd: { type: MarkerType.ArrowClosed, color: '#a78bfa' }, style: { stroke: '#a78bfa', strokeWidth: 2 }}, eds)), [setEdges]);
+  // ALTERADO: Adicionar o `type: 'custom'` ao criar uma nova conexão
+  const onConnect = useCallback((params) => setEdges((eds) => addEdge({ ...params, type: 'custom', markerEnd: { type: MarkerType.ArrowClosed, color: '#a78bfa' }, style: { stroke: '#a78bfa', strokeWidth: 2 } }, eds)), [setEdges]);
 
   const addNode = (elementType) => {
     const allElements = [...availableElements.triggers, ...availableElements.actions, ...availableElements.logic];
@@ -96,6 +98,41 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
     };
     setNodes((nds) => nds.concat({ id: newNodeId, type: 'custom', position, data: newNodeData }));
   };
+
+  // Handlers para drag & drop
+  const onDrop = useCallback((event) => {
+    event.preventDefault();
+    if (!reactFlowInstance) return;
+
+    const type = event.dataTransfer.getData('application/reactflow');
+    if (!type) return;
+
+    const reactFlowBounds = event.currentTarget.getBoundingClientRect();
+    const position = reactFlowInstance.project({
+      x: event.clientX - reactFlowBounds.left,
+      y: event.clientY - reactFlowBounds.top,
+    });
+
+    const allElements = [...availableElements.triggers, ...availableElements.actions, ...availableElements.logic];
+    const element = allElements.find(e => e.type === type);
+
+    const newNodeId = uuidv4();
+    const newNodeData = {
+      id: newNodeId,
+      type: element.type,
+      title: element.label,
+      config: {},
+      onSelect: onSelectNode,
+      onRemove: removeNode,
+    };
+
+    setNodes((nds) => nds.concat({ id: newNodeId, type: 'custom', position, data: newNodeData }));
+  }, [reactFlowInstance, onSelectNode, removeNode, setNodes]);
+
+  const onDragOver = useCallback((event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
 
   const handleNodeConfigUpdate = (nodeId, newConfig) => {
     setNodes((nds) =>
@@ -129,9 +166,8 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
   const selectedNodeData = useMemo(() => nodes.find(n => n.id === selectedNodeId)?.data, [nodes, selectedNodeId]);
 
   return (
-    <div className="flex h-full relative">
+    <div className="fixed inset-0 z-50 flex h-screen ml-64 bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900">
       <div className="flex-1 flex flex-col">
-        {/* O JSX (parte visual) não sofreu alterações */}
         <div className="flex items-center justify-between p-4 border-b border-white/10 z-20 bg-slate-900/50 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={onBack} className="text-gray-400 hover:text-white"><ArrowLeft className="w-5 h-5" /></Button>
@@ -148,27 +184,33 @@ const FunnelEditorComponent = ({ funnel, onBack, onSave }) => {
           </div>
         </div>
         <div className="flex-1 relative bg-slate-800/50 overflow-hidden">
-            <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                onInit={setReactFlowInstance}
-                fitView
-                className="bg-transparent"
-                onNodeClick={(_, node) => onSelectNode(node.id)}
-                onPaneClick={() => setSelectedNodeId(null)}
-            >
-                <Background variant="dots" gap={24} size={1} color="#475569" />
-                <Controls className="react-flow-controls" />
-                <MiniMap nodeColor={(node) => elementConfig[node.data.type]?.color || '#888'} nodeStrokeWidth={3} zoomable pannable />
-            </ReactFlow>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes} // NOVO: Adicionar a prop edgeTypes
+            onInit={setReactFlowInstance}
+            fitViewOnInit
+            className="bg-transparent"
+            onNodeClick={(_, node) => onSelectNode(node.id)}
+            onPaneClick={() => setSelectedNodeId(null)}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+          >
+            <Background variant="dots" gap={24} size={1} color="#475569" />
+            <Controls className="react-flow-controls" />
+            <MiniMap nodeColor={(node) => elementConfig[node.data.type]?.color || '#888'} nodeStrokeWidth={3} zoomable pannable />
+          </ReactFlow>
         </div>
       </div>
-      <ElementSidebar onAddNode={addNode} />
+      <ElementSidebar
+        onAddNode={addNode}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapsed={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+      />
       <AnimatePresence>
         {selectedNodeData && (
           <NodeConfigurationPanel key={selectedNodeData.id} node={selectedNodeData} onUpdate={handleNodeConfigUpdate} onClose={() => setSelectedNodeId(null)} agents={agents} />
